@@ -6,7 +6,7 @@
 
 // LED Config
 const int LED_COUNT = 64;
-const int DATA_PIN = 2;
+const int DATA_PIN = 4;
 const int CHANNEL = 0;
 
 // SmartLed -> RMT driver (WS2812/WS2812B/SK6812/WS2813)
