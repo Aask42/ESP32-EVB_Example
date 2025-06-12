@@ -204,8 +204,7 @@ void process_command(const char *cmd) {
         showColor();
         delay(10);
         
-    }
-    if(strcmp(cmd, "2") == 0){
+    }else if(strcmp(cmd, "2") == 0){
         ESP_LOGI(UART_LOG, "\nOption 2 selected");
     }else if(strcmp(cmd, "3") == 0){
         ESP_LOGI(UART_LOG, "\nOption 3 selected");
