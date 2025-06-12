@@ -38,7 +38,7 @@ This project showcases various capabilities of the ESP32-EVB board:
 
 ## Pin Configuration
 
-- **LED Data Pin**: GPIO 2
+- **LED Data Pin**: GPIO 4 
 - **Relay 1**: GPIO 32
 - **Relay 2**: GPIO 33
 - **Button**: GPIO 34
