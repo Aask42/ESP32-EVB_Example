@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Serial Sync Control</title>
+    <title>Serial Sync Control with MQTT</title>
     <style>
         * {
             margin: 0;
@@ -134,6 +134,14 @@
             box-shadow: 0 5px 15px rgba(39, 174, 96, 0.3);
         }
 
+        .btn-secondary {
+            background: linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%);
+        }
+
+        .btn-secondary:hover {
+            box-shadow: 0 5px 15px rgba(149, 165, 166, 0.3);
+        }
+
         .status {
             padding: 15px;
             border-radius: 8px;
@@ -172,6 +180,17 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            transition: all 0.3s ease;
+        }
+
+        .device-item.device-disconnected {
+            background: #fdf2f2;
+            border-color: #f5c6cb;
+            opacity: 0.8;
+        }
+
+        .device-item.device-disconnected .device-name {
+            color: #721c24;
         }
 
         .device-info {
@@ -255,8 +274,8 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔗 Serial Sync Control</h1>
-            <p>Synchronized command execution across multiple serial devices</p>
+            <h1>🔗 Serial Sync Control with MQTT</h1>
+            <p>Synchronized command execution across multiple serial devices with MQTT messaging</p>
         </div>
 
         <div class="main-content">
@@ -273,6 +292,118 @@
                 </div>
                 <div id="connectionStatus" class="status disconnected">
                     No devices connected
+                </div>
+            </div>
+
+            <!-- MQTT Connection Section -->
+            <div class="section">
+                <h2>📡 MQTT Connection</h2>
+                <div class="controls">
+                    <div class="control-group">
+                        <label for="mqttBroker">MQTT Broker URL:</label>
+                        <input type="text" id="mqttBroker" value="wss://01a0e2bb7f5d48d38c0ce23a40d1d506.s2.eu.hivemq.cloud:8884/mqtt" placeholder="wss://your-cluster.hivemq.cloud:8884/mqtt">
+                    </div>
+                    <div class="control-group">
+                        <label for="mqttClientId">Client ID:</label>
+                        <input type="text" id="mqttClientId" placeholder="Auto-generated" readonly>
+                    </div>
+                </div>
+                <div class="controls">
+                    <div class="control-group">
+                        <label for="mqttUsername">Username (required for HiveMQ Cloud):</label>
+                        <input type="text" id="mqttUsername" placeholder="Enter your HiveMQ Cloud username">
+                    </div>
+                    <div class="control-group">
+                        <label for="mqttPassword">Password (required for HiveMQ Cloud):</label>
+                        <input type="password" id="mqttPassword" placeholder="Enter your HiveMQ Cloud password">
+                    </div>
+                </div>
+                <div class="controls">
+                    <button id="connectMqttBtn" onclick="connectMqtt()">Connect to MQTT</button>
+                    <button id="disconnectMqttBtn" onclick="disconnectMqtt()" disabled>Disconnect MQTT</button>
+                </div>
+                <div id="mqttConnectionStatus" class="status disconnected">
+                    MQTT not connected
+                </div>
+            </div>
+
+            <!-- MQTT Subscription Section -->
+            <div class="section">
+                <h2>📬 MQTT Subscriptions</h2>
+                <div class="controls">
+                    <div class="control-group">
+                        <label for="mqttTopic">Topic to Subscribe:</label>
+                        <input type="text" id="mqttTopic" value="esp32/commands" placeholder="esp32/commands">
+                    </div>
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="autoSubscribeRhythm" checked> Auto-subscribe to "trigger_rhythm" topic
+                        </label>
+                        <small style="color: #7f8c8d; display: block; margin-top: 5px;">
+                            Automatically subscribes to rhythm control topic for BPM and beat division changes
+                        </small>
+                    </div>
+                    <div class="control-group">
+                        <label for="mqttQos">QoS Level:</label>
+                        <select id="mqttQos">
+                            <option value="0">0 - At most once</option>
+                            <option value="1" selected>1 - At least once</option>
+                            <option value="2">2 - Exactly once</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="controls">
+                    <button id="subscribeMqttBtn" onclick="subscribeMqtt()" disabled>Subscribe to Topic</button>
+                    <button id="unsubscribeMqttBtn" onclick="unsubscribeMqtt()" disabled>Unsubscribe</button>
+                </div>
+                <div class="controls">
+                    <div class="control-group">
+                        <label for="publishTopic">Publish Topic:</label>
+                        <input type="text" id="publishTopic" value="esp32/status" placeholder="esp32/status">
+                    </div>
+                    <div class="control-group">
+                        <label for="publishMessage">Message to Publish:</label>
+                        <textarea id="publishMessage" rows="2" placeholder="Enter message to publish..."></textarea>
+                    </div>
+                </div>
+                <div class="controls">
+                    <button id="publishMqttBtn" onclick="publishMqtt()" disabled>Publish Message</button>
+                </div>
+                <div id="mqttSubscriptionStatus" class="status disconnected">
+                    No active subscriptions
+                </div>
+            </div>
+
+            <!-- MQTT Messages -->
+            <div class="section">
+                <h2>📨 MQTT Messages</h2>
+                <div class="controls">
+                    <button onclick="clearMqttMessages()">Clear Messages</button>
+                    <button onclick="saveMqttLog()">💾 Save MQTT Log</button>
+                    <label>
+                        <input type="checkbox" id="autoExecuteMqtt"> Auto-execute received commands on serial devices
+                    </label>
+                </div>
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #3498db;">
+                    <h4 style="margin: 0 0 10px 0; color: #2c3e50;">🎵 Rhythm Control Topic: "trigger_rhythm"</h4>
+                    <p style="margin: 0 0 10px 0; color: #7f8c8d; font-size: 14px;">
+                        Send messages to control BPM and beat division remotely:
+                    </p>
+                    <div style="font-family: 'Courier New', monospace; font-size: 13px; color: #2c3e50;">
+                        <div style="margin-bottom: 5px;"><strong>Simple format:</strong></div>
+                        <div style="margin-left: 15px; margin-bottom: 8px;">
+                            • <code>bpm:120</code> - Set BPM to 120<br>
+                            • <code>division:8</code> - Set beat division to 1/8 notes<br>
+                            • <code>bpm:140,division:4</code> - Set both BPM and division
+                        </div>
+                        <div style="margin-bottom: 5px;"><strong>JSON format:</strong></div>
+                        <div style="margin-left: 15px;">
+                            • <code>{"bpm": 120, "division": 4}</code>
+                        </div>
+                    </div>
+                </div>
+                <div id="mqttMessages" class="log-container" style="height: 200px; background: #0d1117; color: #58a6ff;">
+                    <div style="color: #7d8590; font-style: italic;">📡 MQTT messages will appear here...</div>
                 </div>
             </div>
 
@@ -515,6 +646,7 @@
         </div>
     </div>
 
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
     <script>
         // Global variables
         let connectedPorts = [];
@@ -531,6 +663,13 @@
         let currentFpsLoop = false;
         let tapTimes = [];
         let tapTimeoutId = null;
+        let connectionHealthInterval;
+        
+        // MQTT variables
+        let mqttClient = null;
+        let mqttConnected = false;
+        let subscribedTopics = [];
+        let mqttMessages = [];
 
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
@@ -538,6 +677,8 @@
             checkSerialSupport();
             startNTPSync();
             startDataRateMonitoring();
+            startConnectionHealthMonitoring();
+            initializeMqtt();
             
             // Initialize baud rate (ESP32 commonly uses 115200)
             window.selectedBaudRate = 115200;
@@ -612,10 +753,20 @@
             try {
                 const reader = port.readable.getReader();
                 let buffer = new Uint8Array(0);
+                
+                // Store reader reference for cleanup
+                if (connectedPorts[index]) {
+                    connectedPorts[index].reader = reader;
+                }
 
                 while (true) {
                     const { value, done } = await reader.read();
-                    if (done) break;
+                    if (done) {
+                        // Port was closed/disconnected
+                        log(`Device ${index + 1} disconnected (reader done)`, 'warning');
+                        handleDeviceDisconnect(index);
+                        break;
+                    }
                     
                     // Concatenate new data to buffer
                     const newBuffer = new Uint8Array(buffer.length + value.length);
@@ -689,13 +840,101 @@
                 }
             } catch (error) {
                 log(`Reader error for device ${index + 1}: ${error.message}`, 'error');
+                
+                // Handle different types of disconnection errors
+                if (error.name === 'NetworkError' ||
+                    error.name === 'NotReadableError' ||
+                    error.message.includes('device has been lost') ||
+                    error.message.includes('disconnected') ||
+                    error.message.includes('not open') ||
+                    error.message.includes('The device has been lost') ||
+                    error.message.includes('Failed to execute') ||
+                    port.readable === null) {
+                    log(`Device ${index + 1} disconnected unexpectedly`, 'warning');
+                    handleDeviceDisconnect(index);
+                }
+                
                 // Try to release the reader
                 try {
-                    reader.releaseLock();
+                    if (reader) {
+                        reader.releaseLock();
+                    }
                 } catch (releaseError) {
                     // Ignore release errors
                 }
             }
+        }
+
+        // Handle device disconnection
+        function handleDeviceDisconnect(index) {
+            if (index >= 0 && index < connectedPorts.length && connectedPorts[index]) {
+                const deviceName = connectedPorts[index].name || `Device ${index + 1}`;
+                
+                // Mark device as disconnected
+                connectedPorts[index].connected = false;
+                
+                // Remove from array after a short delay to allow for reconnection attempts
+                setTimeout(() => {
+                    if (index < connectedPorts.length && !connectedPorts[index].connected) {
+                        connectedPorts.splice(index, 1);
+                        updateDeviceList();
+                        updateConnectionStatus();
+                        log(`${deviceName} removed from device list`);
+                        
+                        // Show user notification
+                        showDisconnectNotification(deviceName);
+                    }
+                }, 2000); // 2 second delay
+                
+                // Immediate UI update to show disconnected status
+                updateDeviceList();
+                updateConnectionStatus();
+            }
+        }
+
+        // Show disconnect notification to user
+        function showDisconnectNotification(deviceName) {
+            // Create a temporary notification element
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+                color: white;
+                padding: 15px 20px;
+                border-radius: 8px;
+                box-shadow: 0 5px 15px rgba(231, 76, 60, 0.3);
+                z-index: 10000;
+                font-weight: 600;
+                animation: slideIn 0.3s ease-out;
+            `;
+            notification.innerHTML = `🔌 ${deviceName} disconnected`;
+            
+            // Add slide-in animation
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes slideIn {
+                    from { transform: translateX(100%); opacity: 0; }
+                    to { transform: translateX(0); opacity: 1; }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            document.body.appendChild(notification);
+            
+            // Remove notification after 5 seconds
+            setTimeout(() => {
+                notification.style.animation = 'slideIn 0.3s ease-out reverse';
+                setTimeout(() => {
+                    if (notification.parentNode) {
+                        document.body.removeChild(notification);
+                    }
+                    if (style.parentNode) {
+                        document.head.removeChild(style);
+                    }
+                }, 300);
+            }, 5000);
         }
 
         // Disconnect all serial devices
@@ -725,28 +964,57 @@
                 return;
             }
 
-            deviceList.innerHTML = connectedPorts.map((device, index) => `
-                <div class="device-item">
-                    <div class="device-info">
-                        <div class="device-name">${device.name}</div>
-                        <div class="device-status">Status: ${device.connected ? 'Connected' : 'Disconnected'}</div>
+            deviceList.innerHTML = connectedPorts.map((device, index) => {
+                const statusClass = device.connected ? 'connected' : 'disconnected';
+                const statusText = device.connected ? 'Connected' : 'Disconnected';
+                const buttonText = device.connected ? 'Disconnect' : 'Remove';
+                const buttonClass = device.connected ? 'btn-danger' : 'btn-secondary';
+                const itemClass = device.connected ? '' : 'device-disconnected';
+                
+                return `
+                    <div class="device-item ${itemClass}">
+                        <div class="device-info">
+                            <div class="device-name">${device.name}</div>
+                            <div class="device-status status ${statusClass}">${statusText}</div>
+                        </div>
+                        <button onclick="disconnectDevice(${index})" class="${buttonClass}">${buttonText}</button>
                     </div>
-                    <button onclick="disconnectDevice(${index})" class="btn-danger">Disconnect</button>
-                </div>
-            `).join('');
+                `;
+            }).join('');
 
-            document.getElementById('connectedCount').textContent = connectedPorts.length;
+            // Count only actually connected devices
+            const connectedCount = connectedPorts.filter(device => device.connected).length;
+            document.getElementById('connectedCount').textContent = connectedCount;
         }
 
         // Disconnect specific device
         async function disconnectDevice(index) {
             try {
-                if (connectedPorts[index] && connectedPorts[index].connected) {
-                    await connectedPorts[index].port.close();
+                if (connectedPorts[index]) {
+                    const deviceName = connectedPorts[index].name || `Device ${index + 1}`;
+                    
+                    if (connectedPorts[index].connected && connectedPorts[index].port) {
+                        // Try to close the port gracefully
+                        try {
+                            // Release reader if it exists
+                            if (connectedPorts[index].reader) {
+                                try {
+                                    connectedPorts[index].reader.releaseLock();
+                                } catch (e) {
+                                    // Ignore reader release errors
+                                }
+                            }
+                            await connectedPorts[index].port.close();
+                            log(`${deviceName} disconnected manually`);
+                        } catch (closeError) {
+                            log(`Error closing ${deviceName}: ${closeError.message}`, 'warning');
+                        }
+                    }
+                    
+                    // Remove from array regardless of close success
                     connectedPorts.splice(index, 1);
                     updateDeviceList();
                     updateConnectionStatus();
-                    log(`Device ${index + 1} disconnected`);
                 }
             } catch (error) {
                 log(`Error disconnecting device ${index + 1}: ${error.message}`, 'error');
@@ -1067,8 +1335,16 @@
                 // Send to all connected devices simultaneously
                 const promises = connectedPorts.map(async (device, index) => {
                     try {
-                        if (!device.port.writable) {
-                            throw new Error('Port not writable');
+                        // Check if device is still connected
+                        if (!device.connected) {
+                            log(`Skipping disconnected device ${index + 1}`, 'warning');
+                            return;
+                        }
+
+                        if (!device.port || !device.port.writable) {
+                            log(`Device ${index + 1} port not writable, marking as disconnected`, 'warning');
+                            handleDeviceDisconnect(index);
+                            return;
                         }
                         
                         const writer = device.port.writable.getWriter();
@@ -1080,6 +1356,16 @@
                         displayInMonitor(data, `TX Dev${index + 1}`);
                     } catch (error) {
                         log(`Failed to send to device ${index + 1}: ${error.message}`, 'error');
+                        
+                        // Check if this is a disconnection error
+                        if (error.name === 'NetworkError' ||
+                            error.name === 'NotReadableError' ||
+                            error.message.includes('device has been lost') ||
+                            error.message.includes('disconnected') ||
+                            error.message.includes('not open')) {
+                            log(`Device ${index + 1} disconnected during write operation`, 'warning');
+                            handleDeviceDisconnect(index);
+                        }
                     }
                 });
 
@@ -1512,6 +1798,26 @@
             }, 1000);
         }
 
+        // Start connection health monitoring
+        function startConnectionHealthMonitoring() {
+            connectionHealthInterval = setInterval(() => {
+                checkConnectionHealth();
+            }, 3000); // Check every 3 seconds
+        }
+
+        // Check connection health for all devices
+        function checkConnectionHealth() {
+            connectedPorts.forEach((device, index) => {
+                if (device.connected && device.port) {
+                    // Check if port is still readable/writable
+                    if (!device.port.readable || !device.port.writable) {
+                        log(`Device ${index + 1} connection lost (port not readable/writable)`, 'warning');
+                        handleDeviceDisconnect(index);
+                    }
+                }
+            });
+        }
+
         // Raw input handler - send characters as you type
         document.addEventListener('DOMContentLoaded', function() {
             const rawInput = document.getElementById('rawInput');
@@ -1705,13 +2011,578 @@
             }
         }
 
+        // MQTT Functions
+        function initializeMqtt() {
+            // Generate a unique client ID
+            const clientId = 'esp32-control-' + Math.random().toString(36).substr(2, 9);
+            document.getElementById('mqttClientId').value = clientId;
+            log('MQTT initialized with client ID: ' + clientId);
+        }
+
+        async function connectMqtt() {
+            try {
+                let brokerUrl = document.getElementById('mqttBroker').value.trim();
+                const clientId = document.getElementById('mqttClientId').value.trim();
+                const username = document.getElementById('mqttUsername').value.trim();
+                const password = document.getElementById('mqttPassword').value.trim();
+
+                if (!brokerUrl) {
+                    alert('Please enter a MQTT broker URL');
+                    return;
+                }
+
+                // Ensure proper WebSocket URL format for HiveMQ Cloud
+                if (!brokerUrl.startsWith('ws://') && !brokerUrl.startsWith('wss://')) {
+                    // If it's a HiveMQ Cloud URL without protocol, add wss://
+                    if (brokerUrl.includes('.hivemq.cloud')) {
+                        brokerUrl = 'wss://' + brokerUrl;
+                    } else {
+                        brokerUrl = 'wss://' + brokerUrl;
+                    }
+                }
+
+                // Ensure the URL ends with /mqtt for WebSocket connections
+                if (!brokerUrl.endsWith('/mqtt')) {
+                    brokerUrl = brokerUrl + '/mqtt';
+                }
+
+                // Update the input field with the corrected URL
+                document.getElementById('mqttBroker').value = brokerUrl;
+
+                log('Connecting to MQTT broker: ' + brokerUrl);
+                document.getElementById('connectMqttBtn').disabled = true;
+
+                const options = {
+                    clientId: clientId,
+                    clean: true,
+                    connectTimeout: 10000, // Increased timeout for cloud connections
+                    reconnectPeriod: 1000,
+                    keepalive: 60,
+                    protocolVersion: 4, // Use MQTT 3.1.1
+                };
+
+                // HiveMQ Cloud requires authentication
+                if (brokerUrl.includes('.hivemq.cloud')) {
+                    if (!username || !password) {
+                        alert('HiveMQ Cloud requires username and password. Please enter your credentials.');
+                        document.getElementById('connectMqttBtn').disabled = false;
+                        return;
+                    }
+                    options.username = username;
+                    options.password = password;
+                } else if (username) {
+                    options.username = username;
+                    options.password = password;
+                }
+
+                log('Connection options: ' + JSON.stringify({...options, password: '***'}));
+                mqttClient = mqtt.connect(brokerUrl, options);
+
+                mqttClient.on('connect', function (connack) {
+                    mqttConnected = true;
+                    log('Connected to MQTT broker successfully');
+                    log('Connection acknowledged: ' + JSON.stringify(connack));
+                    updateMqttConnectionStatus();
+                    document.getElementById('connectMqttBtn').disabled = false;
+                    
+                    // Auto-subscribe to rhythm control topic if enabled
+                    if (document.getElementById('autoSubscribeRhythm').checked) {
+                        subscribeToRhythmTopic();
+                    }
+                });
+
+                mqttClient.on('error', function (error) {
+                    log('MQTT connection error: ' + error.message, 'error');
+                    log('Error details: ' + JSON.stringify(error));
+                    mqttConnected = false;
+                    updateMqttConnectionStatus();
+                    document.getElementById('connectMqttBtn').disabled = false;
+                });
+
+                mqttClient.on('close', function () {
+                    log('MQTT connection closed', 'warning');
+                    mqttConnected = false;
+                    updateMqttConnectionStatus();
+                });
+
+                mqttClient.on('offline', function () {
+                    log('MQTT client went offline', 'warning');
+                    mqttConnected = false;
+                    updateMqttConnectionStatus();
+                });
+
+                mqttClient.on('reconnect', function () {
+                    log('MQTT client attempting to reconnect...');
+                });
+
+                mqttClient.on('message', function (topic, message) {
+                    handleMqttMessage(topic, message.toString());
+                });
+
+                // Add connection timeout
+                setTimeout(() => {
+                    if (!mqttConnected) {
+                        log('MQTT connection timeout - please check your credentials and network', 'error');
+                        document.getElementById('connectMqttBtn').disabled = false;
+                    }
+                }, 15000);
+
+            } catch (error) {
+                log('MQTT connection failed: ' + error.message, 'error');
+                document.getElementById('connectMqttBtn').disabled = false;
+            }
+        }
+
+        function disconnectMqtt() {
+            if (mqttClient) {
+                mqttClient.end();
+                mqttClient = null;
+                mqttConnected = false;
+                subscribedTopics = [];
+                updateMqttConnectionStatus();
+                updateMqttSubscriptionStatus();
+                log('Disconnected from MQTT broker');
+            }
+        }
+
+        function updateMqttConnectionStatus() {
+            const status = document.getElementById('mqttConnectionStatus');
+            const connectBtn = document.getElementById('connectMqttBtn');
+            const disconnectBtn = document.getElementById('disconnectMqttBtn');
+            const subscribeBtn = document.getElementById('subscribeMqttBtn');
+            const publishBtn = document.getElementById('publishMqttBtn');
+
+            if (mqttConnected) {
+                status.className = 'status connected';
+                status.textContent = 'Connected to MQTT broker';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                subscribeBtn.disabled = false;
+                publishBtn.disabled = false;
+            } else {
+                status.className = 'status disconnected';
+                status.textContent = 'MQTT not connected';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                subscribeBtn.disabled = true;
+                publishBtn.disabled = true;
+                document.getElementById('unsubscribeMqttBtn').disabled = true;
+            }
+        }
+
+        function subscribeMqtt() {
+            if (!mqttClient || !mqttConnected) {
+                alert('Please connect to MQTT broker first');
+                return;
+            }
+
+            const topic = document.getElementById('mqttTopic').value.trim();
+            const qos = parseInt(document.getElementById('mqttQos').value);
+
+            if (!topic) {
+                alert('Please enter a topic to subscribe to');
+                return;
+            }
+
+            mqttClient.subscribe(topic, { qos: qos }, function (err) {
+                if (err) {
+                    log('MQTT subscription failed: ' + err.message, 'error');
+                } else {
+                    subscribedTopics.push({ topic: topic, qos: qos });
+                    log('Subscribed to MQTT topic: ' + topic + ' (QoS ' + qos + ')');
+                    updateMqttSubscriptionStatus();
+                }
+            });
+        }
+
+        function unsubscribeMqtt() {
+            if (!mqttClient || !mqttConnected) {
+                return;
+            }
+
+            const topic = document.getElementById('mqttTopic').value.trim();
+
+            if (!topic) {
+                alert('Please enter a topic to unsubscribe from');
+                return;
+            }
+
+            mqttClient.unsubscribe(topic, function (err) {
+                if (err) {
+                    log('MQTT unsubscription failed: ' + err.message, 'error');
+                } else {
+                    subscribedTopics = subscribedTopics.filter(sub => sub.topic !== topic);
+                    log('Unsubscribed from MQTT topic: ' + topic);
+                    updateMqttSubscriptionStatus();
+                }
+            });
+        }
+
+        function publishMqtt() {
+            if (!mqttClient || !mqttConnected) {
+                alert('Please connect to MQTT broker first');
+                return;
+            }
+
+            const topic = document.getElementById('publishTopic').value.trim();
+            const message = document.getElementById('publishMessage').value.trim();
+            const qos = parseInt(document.getElementById('mqttQos').value);
+
+            if (!topic || !message) {
+                alert('Please enter both topic and message');
+                return;
+            }
+
+            mqttClient.publish(topic, message, { qos: qos }, function (err) {
+                if (err) {
+                    log('MQTT publish failed: ' + err.message, 'error');
+                } else {
+                    log('Published to MQTT topic: ' + topic + ' - Message: ' + message);
+                    displayMqttMessage(topic, message, 'PUBLISHED', new Date());
+                }
+            });
+        }
+
+        function updateMqttSubscriptionStatus() {
+            const status = document.getElementById('mqttSubscriptionStatus');
+            const unsubscribeBtn = document.getElementById('unsubscribeMqttBtn');
+
+            if (subscribedTopics.length > 0) {
+                status.className = 'status connected';
+                status.textContent = 'Subscribed to ' + subscribedTopics.length + ' topic(s): ' +
+                    subscribedTopics.map(sub => sub.topic).join(', ');
+                unsubscribeBtn.disabled = false;
+            } else {
+                status.className = 'status disconnected';
+                status.textContent = 'No active subscriptions';
+                unsubscribeBtn.disabled = true;
+            }
+        }
+
+        function handleMqttMessage(topic, message) {
+            const timestamp = new Date();
+            log('MQTT message received on topic "' + topic + '": ' + message);
+            displayMqttMessage(topic, message, 'RECEIVED', timestamp);
+
+            // Handle special rhythm control topic
+            if (topic === 'trigger_rhythm') {
+                handleRhythmControl(message);
+                return;
+            }
+
+            // Auto-execute if enabled and we have connected serial devices
+            if (document.getElementById('autoExecuteMqtt').checked && connectedPorts.length > 0) {
+                log('Auto-executing MQTT command on serial devices: ' + message);
+                executeCommand(message);
+            }
+        }
+
+        function handleRhythmControl(message) {
+            try {
+                // Parse the rhythm control message
+                // Expected formats:
+                // "bpm:120" - Set BPM to 120
+                // "division:8" - Set beat division to 8th notes
+                // "bpm:120,division:4" - Set both BPM and division
+                // JSON format: {"bpm": 120, "division": 4}
+                
+                let bpm = null;
+                let division = null;
+                
+                // Try to parse as JSON first
+                try {
+                    const jsonData = JSON.parse(message);
+                    if (jsonData.bpm !== undefined) bpm = parseFloat(jsonData.bpm);
+                    if (jsonData.division !== undefined) division = parseInt(jsonData.division);
+                } catch (e) {
+                    // Parse as simple key:value format
+                    const parts = message.split(',');
+                    for (const part of parts) {
+                        const [key, value] = part.trim().split(':');
+                        if (key === 'bpm') {
+                            bpm = parseFloat(value);
+                        } else if (key === 'division') {
+                            division = parseInt(value);
+                        }
+                    }
+                }
+                
+                // Apply the changes
+                let changes = [];
+                let needsReschedule = false;
+                
+                if (bpm !== null && !isNaN(bpm) && bpm >= 30 && bpm <= 300) {
+                    document.getElementById('bpmInput').value = bpm;
+                    changes.push(`BPM: ${bpm}`);
+                    needsReschedule = true;
+                    log(`Rhythm control: BPM set to ${bpm}`);
+                }
+                
+                if (division !== null && !isNaN(division) && [1, 2, 4, 8, 16, 32].includes(division)) {
+                    document.getElementById('beatDivision').value = division;
+                    changes.push(`Division: 1/${division}`);
+                    needsReschedule = true;
+                    log(`Rhythm control: Beat division set to 1/${division}`);
+                }
+                
+                if (changes.length > 0) {
+                    // Switch to BPM mode if not already
+                    if (document.getElementById('schedulingMode').value !== 'bpm') {
+                        document.getElementById('schedulingMode').value = 'bpm';
+                        updateSchedulingMode();
+                        log('Rhythm control: Switched to BPM scheduling mode');
+                    }
+                    
+                    // Update timing display
+                    updateBpmTiming();
+                    
+                    // Check if BPM scheduling is currently running and update it dynamically
+                    if (needsReschedule && bpmInterval && currentSchedulingMode === 'bpm') {
+                        updateRunningBpmSchedule();
+                        log('Rhythm control: Updated running BPM schedule with new timing');
+                    }
+                    
+                    // Show notification
+                    showRhythmChangeNotification(changes.join(', '));
+                    
+                    log(`Rhythm control applied: ${changes.join(', ')}`);
+                } else {
+                    log('Rhythm control: Invalid message format. Use "bpm:120" or "division:4" or JSON format', 'warning');
+                }
+                
+            } catch (error) {
+                log('Rhythm control error: ' + error.message, 'error');
+            }
+        }
+
+        function updateRunningBpmSchedule() {
+            // Only update if BPM scheduling is currently active
+            if (!bpmInterval || currentSchedulingMode !== 'bpm') {
+                return;
+            }
+            
+            // Get current command and settings
+            const command = document.getElementById('commandInput').value.trim();
+            const beatCount = parseInt(document.getElementById('beatCount').value);
+            const loop = document.getElementById('bpmLoop').checked;
+            
+            if (!command) {
+                return;
+            }
+            
+            // Calculate time to wait until the nearest whole second
+            const now = Date.now();
+            const msUntilNextSecond = 1000 - (now % 1000);
+            
+            log(`Scheduling BPM update to occur at next whole second (${msUntilNextSecond}ms from now)`);
+            
+            // Update status to show pending update
+            document.getElementById('commandStatus').textContent = `BPM scheduling active: updating at next second...`;
+            
+            // Wait until the nearest whole second to apply changes
+            setTimeout(() => {
+                // Clear the current interval
+                clearTimeout(bpmInterval);
+                bpmInterval = null;
+                
+                // Get new timing values
+                const bpm = parseFloat(document.getElementById('bpmInput').value);
+                const division = parseInt(document.getElementById('beatDivision').value);
+                const intervalMs = (60000 / bpm) / (division / 4);
+                
+                log(`Applying BPM update at whole second: ${bpm} BPM, ${division} division, ${intervalMs.toFixed(1)}ms interval`);
+                
+                // Update status display
+                document.getElementById('commandStatus').textContent = `BPM scheduling active: ${bpm} BPM (updated)`;
+                
+                // Continue with the current beat counter state
+                // Note: We maintain the current execution counter and beat position
+                let currentBeat = executionCounter % beatCount; // Estimate current position
+                
+                const executeBpmCommand = () => {
+                    if (currentBeat < beatCount || loop) {
+                        executeCommand(command);
+                        executionCounter++;
+                        document.getElementById('executionCount').textContent = executionCounter;
+                        
+                        currentBeat++;
+                        if (loop && currentBeat >= beatCount) {
+                            currentBeat = 0; // Reset for loop
+                        }
+                        
+                        // Update next execution time with new interval
+                        const nextTime = new Date(Date.now() + intervalMs);
+                        document.getElementById('nextExecution').textContent = nextTime.toLocaleTimeString();
+                        
+                        if (currentBeat < beatCount || loop) {
+                            bpmInterval = setTimeout(executeBpmCommand, intervalMs);
+                        } else {
+                            document.getElementById('commandStatus').className = 'status connected';
+                            document.getElementById('commandStatus').textContent = 'BPM sequence completed';
+                            document.getElementById('cancelBtn').disabled = true;
+                        }
+                    }
+                };
+                
+                // Schedule next execution with new timing
+                bpmInterval = setTimeout(executeBpmCommand, intervalMs);
+                
+            }, msUntilNextSecond);
+        }
+
+        function showRhythmChangeNotification(changes) {
+            // Create a temporary notification element
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                left: 20px;
+                background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+                color: white;
+                padding: 15px 20px;
+                border-radius: 8px;
+                box-shadow: 0 5px 15px rgba(52, 152, 219, 0.3);
+                z-index: 10000;
+                font-weight: 600;
+                animation: slideInLeft 0.3s ease-out;
+            `;
+            notification.innerHTML = `🎵 Rhythm Updated: ${changes}`;
+            
+            // Add slide-in animation
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes slideInLeft {
+                    from { transform: translateX(-100%); opacity: 0; }
+                    to { transform: translateX(0); opacity: 1; }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            document.body.appendChild(notification);
+            
+            // Remove notification after 4 seconds
+            setTimeout(() => {
+                notification.style.animation = 'slideInLeft 0.3s ease-out reverse';
+                setTimeout(() => {
+                    if (notification.parentNode) {
+                        document.body.removeChild(notification);
+                    }
+                    if (style.parentNode) {
+                        document.head.removeChild(style);
+                    }
+                }, 300);
+            }, 4000);
+        }
+
+        function subscribeToRhythmTopic() {
+            if (!mqttClient || !mqttConnected) {
+                return;
+            }
+            
+            const rhythmTopic = 'trigger_rhythm';
+            const qos = 1; // Use QoS 1 for reliable delivery
+            
+            mqttClient.subscribe(rhythmTopic, { qos: qos }, function (err) {
+                if (err) {
+                    log('Failed to subscribe to rhythm topic: ' + err.message, 'error');
+                } else {
+                    // Check if already in subscribed topics to avoid duplicates
+                    const exists = subscribedTopics.some(sub => sub.topic === rhythmTopic);
+                    if (!exists) {
+                        subscribedTopics.push({ topic: rhythmTopic, qos: qos });
+                    }
+                    log('Auto-subscribed to rhythm control topic: ' + rhythmTopic + ' (QoS ' + qos + ')');
+                    updateMqttSubscriptionStatus();
+                }
+            });
+        }
+
+        function displayMqttMessage(topic, message, type, timestamp) {
+            const container = document.getElementById('mqttMessages');
+            const entry = document.createElement('div');
+            entry.style.marginBottom = '5px';
+            entry.style.padding = '5px 10px';
+            entry.style.borderRadius = '4px';
+            entry.style.fontFamily = "'Consolas', 'Monaco', 'Courier New', monospace";
+            entry.style.fontSize = '13px';
+            entry.style.lineHeight = '1.3';
+
+            const timeStr = timestamp.toLocaleTimeString();
+            
+            if (type === 'RECEIVED') {
+                entry.style.color = '#7ee787';
+                entry.style.backgroundColor = 'rgba(126, 231, 135, 0.1)';
+                entry.innerHTML = `<strong>[${timeStr}] 📥 ${topic}:</strong> ${message}`;
+            } else if (type === 'PUBLISHED') {
+                entry.style.color = '#ff7b72';
+                entry.style.backgroundColor = 'rgba(255, 123, 114, 0.1)';
+                entry.innerHTML = `<strong>[${timeStr}] 📤 ${topic}:</strong> ${message}`;
+            }
+
+            container.appendChild(entry);
+
+            // Store message for saving
+            mqttMessages.push({
+                timestamp: timestamp,
+                topic: topic,
+                message: message,
+                type: type
+            });
+
+            // Limit messages to prevent memory issues
+            const maxMessages = 1000;
+            while (container.children.length > maxMessages) {
+                container.removeChild(container.firstChild);
+                mqttMessages.shift();
+            }
+
+            // Auto-scroll to bottom
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function clearMqttMessages() {
+            document.getElementById('mqttMessages').innerHTML =
+                '<div style="color: #7d8590; font-style: italic;">📡 MQTT messages will appear here...</div>';
+            mqttMessages = [];
+            log('MQTT messages cleared');
+        }
+
+        function saveMqttLog() {
+            if (mqttMessages.length === 0) {
+                alert('No MQTT messages to save');
+                return;
+            }
+
+            const logContent = mqttMessages.map(msg => {
+                const timeStr = msg.timestamp.toLocaleString();
+                const typeStr = msg.type === 'RECEIVED' ? '📥' : '📤';
+                return `[${timeStr}] ${typeStr} ${msg.topic}: ${msg.message}`;
+            }).join('\n');
+
+            const blob = new Blob([logContent], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `mqtt_log_${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            log('MQTT log saved (' + mqttMessages.length + ' messages)');
+        }
+
         // Cleanup on page unload
         window.addEventListener('beforeunload', async () => {
             if (syncInterval) clearInterval(syncInterval);
             if (dataRateInterval) clearInterval(dataRateInterval);
+            if (connectionHealthInterval) clearInterval(connectionHealthInterval);
             if (bpmInterval) clearTimeout(bpmInterval);
             if (fpsInterval) clearTimeout(fpsInterval);
             if (metronomeInterval) clearTimeout(metronomeInterval);
+            if (mqttClient) {
+                mqttClient.end();
+            }
             await disconnectSerial();
         });
     </script>
