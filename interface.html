@@ -274,8 +274,8 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔗 Serial Sync Control with MQTT</h1>
-            <p>Synchronized command execution across multiple serial devices with MQTT messaging</p>
+            <h1>🔗 Serial Sync Control with Streaming Clock</h1>
+            <p>Synchronized command execution across multiple serial devices with WebSocket streaming clock and MQTT messaging</p>
         </div>
 
         <div class="main-content">
@@ -417,11 +417,11 @@
 
             <!-- Synchronization Status -->
             <div class="section">
-                <h2>⏰ Synchronization Status</h2>
+                <h2>⏰ Streaming Clock Synchronization Status</h2>
                 <div class="sync-info">
                     <div class="sync-stat">
                         <div id="ntpOffset" class="sync-stat-value">--</div>
-                        <div class="sync-stat-label">NTP Offset (ms)</div>
+                        <div class="sync-stat-label">Clock Offset (ms)</div>
                     </div>
                     <div class="sync-stat">
                         <div id="connectedCount" class="sync-stat-value">0</div>
@@ -429,14 +429,14 @@
                     </div>
                     <div class="sync-stat">
                         <div id="lastSync" class="sync-stat-value">--</div>
-                        <div class="sync-stat-label">Last Sync (NTP)</div>
+                        <div class="sync-stat-label">Last Sync (Stream)</div>
                     </div>
                     <div class="sync-stat">
                         <div id="currentNtpTime" class="sync-stat-value">--</div>
-                        <div class="sync-stat-label">Current NTP Time</div>
+                        <div class="sync-stat-label">Current Stream Time</div>
                     </div>
                 </div>
-                <button id="syncBtn" onclick="syncTime()" class="btn-success">🔄 Sync Time with NTP</button>
+                <button id="syncBtn" onclick="syncTime()" class="btn-success">🔄 Sync Time via Stream</button>
             </div>
 
             <!-- Command Control -->
@@ -476,7 +476,7 @@
                         <label for="targetTime">Target Execution Time:</label>
                         <input type="time" id="targetTime" step="1">
                         <small style="color: #7f8c8d; display: block; margin-top: 5px;">
-                            Time is in your local timezone. Will be converted to NTP time for synchronization.
+                            Time is in your local timezone. Will be converted to streaming clock time for synchronization.
                         </small>
                     </div>
                     <div class="control-group" id="dateInputGroup" style="display: none;">
@@ -703,11 +703,11 @@
         document.addEventListener('DOMContentLoaded', function() {
             log('Application started');
             checkSerialSupport();
-            startNTPSync();
+            startStreamingClock();
             startDataRateMonitoring();
             startConnectionHealthMonitoring();
             initializeMqtt();
-            startNtpTimeDisplay();
+            startClockTimeDisplay();
             
             // Initialize baud rate (ESP32 commonly uses 115200)
             window.selectedBaudRate = 115200;
@@ -1085,61 +1085,134 @@
             }
         }
 
-        // Enhanced NTP Time Synchronization with drift correction
-        let ntpSyncHistory = [];
+        // WebSocket Streaming Clock Synchronization
+        let clockWebSocket = null;
+        let clockSyncHistory = [];
         let driftRate = 0; // milliseconds per second
         let lastSyncTime = 0;
         let syncFailureCount = 0;
-        let adaptiveSyncInterval = 60000; // Start with 1 minute, will adapt based on drift
+        let reconnectAttempts = 0;
+        let maxReconnectAttempts = 10;
+        let reconnectDelay = 1000; // Start with 1 second
+        let clockConnected = false;
 
-        async function syncTime() {
-            try {
-                log('Syncing with NTP server...');
-                document.getElementById('syncBtn').disabled = true;
-                
-                const syncStartTime = Date.now();
-                
-                // Enhanced NTP sync using multiple time servers with redundancy
-                const timeServers = [
-                    'https://worldtimeapi.org/api/timezone/Etc/UTC',
-                ];
-
-                let serverTime = null;
-                let networkLatency = 0;
-                
-                for (const server of timeServers) {
+        // Free WebSocket time services (fallback to HTTP if WebSocket unavailable)
+        const clockServices = [
+            {
+                name: 'TimeAPI.io WebSocket',
+                url: 'wss://timeapi.io/ws/utc',
+                type: 'websocket',
+                parseMessage: (data) => {
                     try {
-                        const requestStart = Date.now();
-                        const response = await fetch(server);
-                        const requestEnd = Date.now();
-                        networkLatency = (requestEnd - requestStart) / 2; // Estimate one-way latency
-                        
-                        const data = await response.json();
-                        
-                        if (data.datetime) {
-                            serverTime = new Date(data.datetime);
-                        } else if (data.dateTime) {
-                            serverTime = new Date(data.dateTime);
-                        }
-                        
-                        if (serverTime) {
-                            // Compensate for network latency
-                            serverTime = new Date(serverTime.getTime() + networkLatency);
-                            break;
-                        }
+                        const parsed = JSON.parse(data);
+                        return parsed.dateTime ? new Date(parsed.dateTime) : null;
                     } catch (e) {
-                        log(`Failed to sync with ${server}: ${e.message}`, 'warning');
-                        continue;
+                        return null;
                     }
                 }
+            }
+        ];
 
+        let currentServiceIndex = 0;
+
+        async function connectStreamingClock() {
+            if (clockWebSocket && clockWebSocket.readyState === WebSocket.OPEN) {
+                return; // Already connected
+            }
+
+            // Close existing connection if it exists
+            if (clockWebSocket) {
+                try {
+                    clockWebSocket.close();
+                } catch (e) {
+                    // Ignore close errors
+                }
+                clockWebSocket = null;
+            }
+
+            const service = clockServices[currentServiceIndex];
+            log(`Attempting to connect to streaming clock: ${service.name}`);
+
+            if (service.type === 'websocket') {
+                try {
+                    // Add connection timeout to prevent hanging
+                    const connectionTimeout = setTimeout(() => {
+                        if (clockWebSocket && clockWebSocket.readyState === WebSocket.CONNECTING) {
+                            log('Streaming clock connection timeout, closing...', 'warning');
+                            clockWebSocket.close();
+                        }
+                    }, 10000);
+
+                    clockWebSocket = new WebSocket(service.url);
+                    
+                    clockWebSocket.onopen = () => {
+                        clearTimeout(connectionTimeout);
+                        clockConnected = true;
+                        reconnectAttempts = 0;
+                        reconnectDelay = 2000;
+                        syncFailureCount = 0;
+                        log(`Connected to streaming clock: ${service.name}`);
+                        updateClockConnectionStatus();
+                        
+                        // Request initial time sync
+                        try {
+                            if (service.url.includes('worldtimeapi')) {
+                                clockWebSocket.send(JSON.stringify({ action: 'get_time', timezone: 'UTC' }));
+                            } else {
+                                clockWebSocket.send(JSON.stringify({ action: 'get_time' }));
+                            }
+                        } catch (e) {
+                            log('Error sending initial time request: ' + e.message, 'warning');
+                        }
+                    };
+
+                    clockWebSocket.onmessage = (event) => {
+                        handleStreamingClockMessage(event.data, service);
+                    };
+
+                    clockWebSocket.onclose = (event) => {
+                        clearTimeout(connectionTimeout);
+                        clockConnected = false;
+                        updateClockConnectionStatus();
+                        log(`Streaming clock connection closed: ${event.reason || 'Unknown reason'}`, 'warning');
+                        
+                        // Only schedule reconnect if it wasn't a manual close
+                        if (event.code !== 1000) {
+                            setTimeout(() => scheduleReconnect(), 5000); // Delay before reconnect
+                        }
+                    };
+
+                    clockWebSocket.onerror = (error) => {
+                        clearTimeout(connectionTimeout);
+                        log(`Streaming clock WebSocket error: ${error.message || 'Connection failed'}`, 'error');
+                        clockConnected = false;
+                        updateClockConnectionStatus();
+                        
+                        // Delay error-based reconnects to avoid rapid retries
+                        setTimeout(() => scheduleReconnect(), 10000);
+                    };
+
+                } catch (error) {
+                    log(`Failed to create WebSocket connection: ${error.message}`, 'error');
+                    scheduleReconnect();
+                }
+            } else {
+                // HTTP fallback
+                await syncTimeHTTP(service);
+            }
+        }
+
+        function handleStreamingClockMessage(data, service) {
+            try {
+                const serverTime = service.parseMessage(data);
                 if (serverTime) {
+                    const syncStartTime = Date.now();
                     const localTime = new Date();
                     const previousOffset = ntpOffset;
                     ntpOffset = serverTime.getTime() - localTime.getTime();
                     
                     // Calculate drift rate if we have previous sync data
-                    if (lastSyncTime > 0 && ntpSyncHistory.length > 0) {
+                    if (lastSyncTime > 0 && clockSyncHistory.length > 0) {
                         const timeSinceLastSync = (syncStartTime - lastSyncTime) / 1000; // seconds
                         const offsetChange = ntpOffset - previousOffset;
                         const currentDriftRate = offsetChange / timeSinceLastSync; // ms per second
@@ -1151,107 +1224,174 @@
                     }
                     
                     // Store sync history for drift analysis
-                    ntpSyncHistory.push({
+                    clockSyncHistory.push({
                         timestamp: syncStartTime,
                         offset: ntpOffset,
                         driftRate: driftRate,
-                        networkLatency: networkLatency
+                        service: service.name
                     });
                     
                     // Keep only last 10 sync records
-                    if (ntpSyncHistory.length > 10) {
-                        ntpSyncHistory.shift();
+                    if (clockSyncHistory.length > 10) {
+                        clockSyncHistory.shift();
                     }
                     
                     lastSyncTime = syncStartTime;
-                    syncFailureCount = 0; // Reset failure count on success
+                    syncFailureCount = 0;
                     
-                    // Adapt sync interval based on drift rate
-                    adaptSyncInterval();
+                    document.getElementById('ntpOffset').textContent = `${ntpOffset.toFixed(0)}ms (WS)`;
+                    const clockAdjustedTime = new Date(Date.now() + ntpOffset);
+                    document.getElementById('lastSync').textContent = clockAdjustedTime.toLocaleTimeString();
                     
-                    document.getElementById('ntpOffset').textContent = `${ntpOffset} (±${networkLatency.toFixed(1)}ms)`;
-                    // Use NTP-adjusted time for last sync display
-                    const ntpAdjustedTime = new Date(Date.now() + ntpOffset);
-                    document.getElementById('lastSync').textContent = ntpAdjustedTime.toLocaleTimeString();
+                    log(`Streaming clock synchronized. Offset: ${ntpOffset.toFixed(0)}ms via ${service.name}`);
+                    log(`Local time: ${localTime.toLocaleTimeString()}, Clock time: ${serverTime.toLocaleTimeString()}`);
+                }
+            } catch (error) {
+                log(`Error processing streaming clock message: ${error.message}`, 'error');
+            }
+        }
+
+        async function syncTimeHTTP(service) {
+            try {
+                log(`Syncing with HTTP fallback: ${service.name}`);
+                document.getElementById('syncBtn').disabled = true;
+                
+                const syncStartTime = Date.now();
+                const requestStart = Date.now();
+                const serverTime = await service.parseMessage(service.url);
+                const requestEnd = Date.now();
+                const networkLatency = (requestEnd - requestStart) / 2;
+
+                if (serverTime) {
+                    // Compensate for network latency
+                    const adjustedServerTime = new Date(serverTime.getTime() + networkLatency);
+                    const localTime = new Date();
+                    const previousOffset = ntpOffset;
+                    ntpOffset = adjustedServerTime.getTime() - localTime.getTime();
                     
-                    log(`Time synchronized. Offset: ${ntpOffset}ms, Network latency: ${networkLatency.toFixed(1)}ms`);
-                    log(`Local time: ${localTime.toLocaleTimeString()}, NTP time: ${serverTime.toLocaleTimeString()}`);
-                    log(`Drift rate: ${(driftRate * 1000).toFixed(3)}ms/s, Next sync in: ${(adaptiveSyncInterval/1000).toFixed(0)}s`);
+                    // Calculate drift rate if we have previous sync data
+                    if (lastSyncTime > 0 && clockSyncHistory.length > 0) {
+                        const timeSinceLastSync = (syncStartTime - lastSyncTime) / 1000;
+                        const offsetChange = ntpOffset - previousOffset;
+                        const currentDriftRate = offsetChange / timeSinceLastSync;
+                        driftRate = (driftRate * 0.7) + (currentDriftRate * 0.3);
+                    }
+                    
+                    clockSyncHistory.push({
+                        timestamp: syncStartTime,
+                        offset: ntpOffset,
+                        driftRate: driftRate,
+                        networkLatency: networkLatency,
+                        service: service.name
+                    });
+                    
+                    if (clockSyncHistory.length > 10) {
+                        clockSyncHistory.shift();
+                    }
+                    
+                    lastSyncTime = syncStartTime;
+                    syncFailureCount = 0;
+                    
+                    document.getElementById('ntpOffset').textContent = `${ntpOffset.toFixed(0)} (±${networkLatency.toFixed(1)}ms)`;
+                    const clockAdjustedTime = new Date(Date.now() + ntpOffset);
+                    document.getElementById('lastSync').textContent = clockAdjustedTime.toLocaleTimeString();
+                    
+                    log(`HTTP time synchronized. Offset: ${ntpOffset.toFixed(0)}ms, Latency: ${networkLatency.toFixed(1)}ms`);
                 } else {
-                    throw new Error('Could not reach any time servers');
+                    throw new Error('Could not parse time from HTTP response');
                 }
             } catch (error) {
                 syncFailureCount++;
-                log(`NTP sync failed (attempt ${syncFailureCount}): ${error.message}`, 'error');
-                
-                // If we have drift rate data, apply drift correction
-                if (lastSyncTime > 0 && Math.abs(driftRate) > 0.001) {
-                    const timeSinceLastSync = (Date.now() - lastSyncTime) / 1000;
-                    const estimatedDrift = driftRate * timeSinceLastSync;
-                    ntpOffset += estimatedDrift;
-                    log(`Applied drift correction: ${estimatedDrift.toFixed(2)}ms (rate: ${(driftRate * 1000).toFixed(3)}ms/s)`, 'warning');
-                    document.getElementById('ntpOffset').textContent = `${ntpOffset.toFixed(0)} (drift-corrected)`;
-                }
-                
-                // Increase sync frequency on failures
-                if (syncFailureCount >= 3) {
-                    adaptiveSyncInterval = Math.max(30000, adaptiveSyncInterval / 2); // Min 30 seconds
-                    log(`Increased sync frequency due to failures: ${(adaptiveSyncInterval/1000).toFixed(0)}s`, 'warning');
-                }
-                
-                // Fallback to local time only after multiple failures
-                if (syncFailureCount >= 5) {
-                    ntpOffset = 0;
-                    document.getElementById('ntpOffset').textContent = '0 (Local - NTP failed)';
-                    log('Falling back to local time after multiple NTP failures', 'error');
-                }
+                log(`HTTP sync failed (attempt ${syncFailureCount}): ${error.message}`, 'error');
+                scheduleReconnect();
             } finally {
                 document.getElementById('syncBtn').disabled = false;
             }
         }
 
-        // Adapt sync interval based on clock drift characteristics
-        function adaptSyncInterval() {
-            const absDriftRate = Math.abs(driftRate);
-            
-            if (absDriftRate < 0.001) {
-                // Very stable clock - sync less frequently
-                adaptiveSyncInterval = 300000; // 5 minutes
-            } else if (absDriftRate < 0.01) {
-                // Moderate drift - normal sync frequency
-                adaptiveSyncInterval = 120000; // 2 minutes
-            } else if (absDriftRate < 0.1) {
-                // High drift - sync more frequently
-                adaptiveSyncInterval = 60000; // 1 minute
-            } else {
-                // Very high drift - sync very frequently
-                adaptiveSyncInterval = 30000; // 30 seconds
+        function scheduleReconnect() {
+            // Don't reconnect if MQTT is connecting or unstable to avoid conflicts
+            if (mqttClient && (mqttClient.reconnecting || !mqttConnected)) {
+                log('Delaying streaming clock reconnect - MQTT connection in progress', 'warning');
+                setTimeout(() => scheduleReconnect(), 10000);
+                return;
             }
-            
-            log(`Adaptive sync interval set to ${(adaptiveSyncInterval/1000).toFixed(0)}s based on drift rate ${(driftRate * 1000).toFixed(3)}ms/s`);
-        }
 
-        // Start automatic NTP sync with adaptive intervals
-        function startNTPSync() {
-            syncTime(); // Initial sync
+            if (reconnectAttempts >= maxReconnectAttempts) {
+                // Try next service
+                currentServiceIndex = (currentServiceIndex + 1) % clockServices.length;
+                reconnectAttempts = 0;
+                reconnectDelay = 2000; // Increased initial delay
+                log(`Switching to next clock service: ${clockServices[currentServiceIndex].name}`);
+            }
+
+            reconnectAttempts++;
+            log(`Scheduling streaming clock reconnect attempt ${reconnectAttempts} in ${reconnectDelay}ms`);
             
-            // Use adaptive interval that adjusts based on clock stability
-            const scheduleNextSync = () => {
-                if (syncInterval) {
-                    clearTimeout(syncInterval);
+            setTimeout(() => {
+                // Double-check MQTT state before reconnecting
+                if (!mqttClient || mqttConnected || !mqttClient.reconnecting) {
+                    connectStreamingClock();
+                } else {
+                    log('Skipping streaming clock reconnect - MQTT still connecting');
+                    scheduleReconnect();
                 }
-                syncInterval = setTimeout(() => {
-                    syncTime().then(() => {
-                        scheduleNextSync(); // Schedule next sync with potentially updated interval
-                    });
-                }, adaptiveSyncInterval);
-            };
+            }, reconnectDelay);
             
-            scheduleNextSync();
+            // More conservative exponential backoff
+            reconnectDelay = Math.min(reconnectDelay * 1.5 + Math.random() * 2000, 60000);
         }
 
-        // Get drift-corrected NTP time
-        function getDriftCorrectedNtpTime() {
+        function updateClockConnectionStatus() {
+            const statusElement = document.getElementById('ntpOffset');
+            if (clockConnected) {
+                statusElement.style.color = '#27ae60';
+            } else {
+                statusElement.style.color = '#e74c3c';
+            }
+        }
+
+        async function syncTime() {
+            if (clockWebSocket && clockWebSocket.readyState === WebSocket.OPEN) {
+                // Request time update via WebSocket
+                const service = clockServices[currentServiceIndex];
+                if (service.url.includes('worldtimeapi')) {
+                    clockWebSocket.send(JSON.stringify({ action: 'get_time', timezone: 'UTC' }));
+                } else {
+                    clockWebSocket.send(JSON.stringify({ action: 'get_time' }));
+                }
+                log('Requested time update via streaming clock');
+            } else {
+                // Fallback to HTTP or reconnect WebSocket
+                await connectStreamingClock();
+            }
+        }
+
+        // Start streaming clock connection with improved connection management
+        function startStreamingClock() {
+            connectStreamingClock();
+            
+            // Set up periodic connection health check with reduced frequency to avoid conflicts
+            setInterval(() => {
+                // Only attempt reconnect if not currently connecting and MQTT is stable
+                if (!clockConnected &&
+                    (!clockWebSocket || clockWebSocket.readyState === WebSocket.CLOSED) &&
+                    (!mqttClient || mqttConnected || !mqttClient.reconnecting)) {
+                    log('Streaming clock connection lost, attempting reconnect...', 'warning');
+                    connectStreamingClock();
+                }
+            }, 60000); // Reduced frequency to every 60 seconds
+            
+            // Request time updates every 2 minutes when connected
+            setInterval(() => {
+                if (clockConnected && clockWebSocket && clockWebSocket.readyState === WebSocket.OPEN) {
+                    syncTime();
+                }
+            }, 120000); // Reduced frequency to every 2 minutes
+        }
+
+        // Get drift-corrected streaming clock time
+        function getDriftCorrectedClockTime() {
             if (lastSyncTime === 0) {
                 return Date.now() + ntpOffset;
             }
@@ -1261,12 +1401,12 @@
             return Date.now() + ntpOffset + estimatedDrift;
         }
 
-        // Start NTP time display update with drift correction
-        function startNtpTimeDisplay() {
-            // Update current NTP time display every second using drift correction
+        // Start streaming clock time display update with drift correction
+        function startClockTimeDisplay() {
+            // Update current streaming clock time display every second using drift correction
             ntpTimeDisplayInterval = setInterval(() => {
-                const driftCorrectedNtpTime = new Date(getDriftCorrectedNtpTime());
-                document.getElementById('currentNtpTime').textContent = driftCorrectedNtpTime.toLocaleTimeString();
+                const driftCorrectedClockTime = new Date(getDriftCorrectedClockTime());
+                document.getElementById('currentNtpTime').textContent = driftCorrectedClockTime.toLocaleTimeString();
             }, 1000);
         }
 
@@ -1325,7 +1465,7 @@
                     document.getElementById('timeInputGroup').style.display = 'block';
                     document.getElementById('dateInputGroup').style.display = 'block';
                     // Set default time to current time + 1 minute
-                    const now = new Date(getDriftCorrectedNtpTime());
+                    const now = new Date(getDriftCorrectedClockTime());
                     now.setMinutes(now.getMinutes() + 1);
                     now.setSeconds(0);
                     document.getElementById('targetTime').value = now.toTimeString().slice(0, 8);
@@ -1390,7 +1530,7 @@
             }
         }
 
-        // Schedule command using various timing modes with drift-corrected NTP synchronization
+        // Schedule command using various timing modes with drift-corrected streaming clock synchronization
         function scheduleDelayCommand(command) {
             const scheduleMode = document.getElementById('scheduleMode').value;
             let targetNtpExecutionTime;
@@ -1522,7 +1662,7 @@
                 });
             }
 
-            // Execute at the exact scheduled time, accounting for drift-corrected NTP offset
+            // Execute at the exact scheduled time, accounting for drift-corrected streaming clock offset
             setTimeout(() => {
                 const actualExecutionTime = Date.now();
                 const actualDriftCorrectedNtpTime = getDriftCorrectedNtpTime();
@@ -1550,21 +1690,21 @@
             const intervalMs = (60000 / bpm) / (division / 4);
             
             log(`Starting BPM scheduling: ${bpm} BPM, ${division} division, ${beatCount} beats, loop: ${loop}`);
-            log(`Interval: ${intervalMs.toFixed(1)}ms per execution (NTP-synchronized)`);
-            log(`Current NTP offset: ${ntpOffset}ms`);
+            log(`Interval: ${intervalMs.toFixed(1)}ms per execution (Streaming clock synchronized)`);
+            log(`Current streaming clock offset: ${ntpOffset}ms`);
             
             document.getElementById('commandStatus').className = 'status syncing';
-            document.getElementById('commandStatus').textContent = `BPM scheduling active: ${bpm} BPM (NTP-sync)`;
+            document.getElementById('commandStatus').textContent = `BPM scheduling active: ${bpm} BPM (Stream-sync)`;
             document.getElementById('cancelBtn').disabled = false;
             
             let currentBeat = 0;
-            let nextTargetNtpTime = Date.now() + ntpOffset; // Start from current NTP time
+            let nextTargetClockTime = Date.now() + ntpOffset; // Start from current streaming clock time
             
             const executeBpmCommand = () => {
                 if (currentBeat < beatCount || loop) {
-                    // Log the actual NTP time of execution
-                    const actualNtpTime = Date.now() + ntpOffset;
-                    log(`BPM beat ${currentBeat + 1} executed at NTP time: ${new Date(actualNtpTime).toLocaleTimeString()}`);
+                    // Log the actual streaming clock time of execution
+                    const actualClockTime = Date.now() + ntpOffset;
+                    log(`BPM beat ${currentBeat + 1} executed at streaming clock time: ${new Date(actualClockTime).toLocaleTimeString()}`);
                     
                     executeCommand(command);
                     executionCounter++;
@@ -1576,22 +1716,22 @@
                     }
                     
                     if (currentBeat < beatCount || loop) {
-                        // Calculate next target NTP time
-                        nextTargetNtpTime += intervalMs;
+                        // Calculate next target streaming clock time
+                        nextTargetClockTime += intervalMs;
                         
-                        // Calculate local delay needed to hit target NTP time
+                        // Calculate local delay needed to hit target streaming clock time
                         const currentLocalTime = Date.now();
-                        const targetLocalTime = nextTargetNtpTime - ntpOffset;
+                        const targetLocalTime = nextTargetClockTime - ntpOffset;
                         const localDelay = targetLocalTime - currentLocalTime;
                         
-                        // Update display with target NTP time
+                        // Update display with target streaming clock time
                         document.getElementById('nextExecution').textContent =
-                            new Date(nextTargetNtpTime).toLocaleTimeString() + ' (NTP target)';
+                            new Date(nextTargetClockTime).toLocaleTimeString() + ' (Stream target)';
                         
-                        // Schedule next execution to hit exact NTP time
+                        // Schedule next execution to hit exact streaming clock time
                         bpmInterval = setTimeout(executeBpmCommand, Math.max(0, localDelay));
                         
-                        log(`Next BPM beat scheduled for NTP time: ${new Date(nextTargetNtpTime).toLocaleTimeString()}, local delay: ${localDelay.toFixed(1)}ms`);
+                        log(`Next BPM beat scheduled for streaming clock time: ${new Date(nextTargetClockTime).toLocaleTimeString()}, local delay: ${localDelay.toFixed(1)}ms`);
                     } else {
                         document.getElementById('commandStatus').className = 'status connected';
                         document.getElementById('commandStatus').textContent = 'BPM sequence completed';
@@ -1619,21 +1759,21 @@
             const totalExecutions = Math.ceil(totalFrames / frameInterval);
             
             log(`Starting FPS scheduling: ${fps} FPS, every ${frameInterval} frames, ${totalFrames} total frames, loop: ${loop}`);
-            log(`Interval: ${executionIntervalMs.toFixed(1)}ms per execution (NTP-synchronized)`);
-            log(`Current NTP offset: ${ntpOffset}ms`);
+            log(`Interval: ${executionIntervalMs.toFixed(1)}ms per execution (Streaming clock synchronized)`);
+            log(`Current streaming clock offset: ${ntpOffset}ms`);
             
             document.getElementById('commandStatus').className = 'status syncing';
-            document.getElementById('commandStatus').textContent = `FPS scheduling active: ${fps} FPS (NTP-sync)`;
+            document.getElementById('commandStatus').textContent = `FPS scheduling active: ${fps} FPS (Stream-sync)`;
             document.getElementById('cancelBtn').disabled = false;
             
             let currentExecution = 0;
-            let nextTargetNtpTime = Date.now() + ntpOffset; // Start from current NTP time
+            let nextTargetClockTime = Date.now() + ntpOffset; // Start from current streaming clock time
             
             const executeFpsCommand = () => {
                 if (currentExecution < totalExecutions || loop) {
-                    // Log the actual NTP time of execution
-                    const actualNtpTime = Date.now() + ntpOffset;
-                    log(`FPS frame ${currentExecution + 1} executed at NTP time: ${new Date(actualNtpTime).toLocaleTimeString()}`);
+                    // Log the actual streaming clock time of execution
+                    const actualClockTime = Date.now() + ntpOffset;
+                    log(`FPS frame ${currentExecution + 1} executed at streaming clock time: ${new Date(actualClockTime).toLocaleTimeString()}`);
                     
                     executeCommand(command);
                     executionCounter++;
@@ -1645,22 +1785,22 @@
                     }
                     
                     if (currentExecution < totalExecutions || loop) {
-                        // Calculate next target NTP time
-                        nextTargetNtpTime += executionIntervalMs;
+                        // Calculate next target streaming clock time
+                        nextTargetClockTime += executionIntervalMs;
                         
-                        // Calculate local delay needed to hit target NTP time
+                        // Calculate local delay needed to hit target streaming clock time
                         const currentLocalTime = Date.now();
-                        const targetLocalTime = nextTargetNtpTime - ntpOffset;
+                        const targetLocalTime = nextTargetClockTime - ntpOffset;
                         const localDelay = targetLocalTime - currentLocalTime;
                         
-                        // Update display with target NTP time
+                        // Update display with target streaming clock time
                         document.getElementById('nextExecution').textContent =
-                            new Date(nextTargetNtpTime).toLocaleTimeString() + ' (NTP target)';
+                            new Date(nextTargetClockTime).toLocaleTimeString() + ' (Stream target)';
                         
-                        // Schedule next execution to hit exact NTP time
+                        // Schedule next execution to hit exact streaming clock time
                         fpsInterval = setTimeout(executeFpsCommand, Math.max(0, localDelay));
                         
-                        log(`Next FPS frame scheduled for NTP time: ${new Date(nextTargetNtpTime).toLocaleTimeString()}, local delay: ${localDelay.toFixed(1)}ms`);
+                        log(`Next FPS frame scheduled for streaming clock time: ${new Date(nextTargetClockTime).toLocaleTimeString()}, local delay: ${localDelay.toFixed(1)}ms`);
                     } else {
                         document.getElementById('commandStatus').className = 'status connected';
                         document.getElementById('commandStatus').textContent = 'FPS sequence completed';
@@ -1911,9 +2051,9 @@
         // Logging function
         function log(message, type = 'info') {
             const logContainer = document.getElementById('logContainer');
-            // Use NTP-adjusted time for logging timestamps
-            const ntpAdjustedTime = new Date(Date.now() + ntpOffset);
-            const timestamp = ntpAdjustedTime.toLocaleTimeString();
+            // Use streaming clock-adjusted time for logging timestamps
+            const clockAdjustedTime = new Date(Date.now() + ntpOffset);
+            const timestamp = clockAdjustedTime.toLocaleTimeString();
             const logEntry = document.createElement('div');
             logEntry.className = 'log-entry';
             
@@ -1921,9 +2061,9 @@
             if (type === 'error') prefix = '[ERROR]';
             if (type === 'warning') prefix = '[WARN]';
             
-            // Show NTP offset in timestamp if significant (>100ms)
+            // Show streaming clock offset in timestamp if significant (>100ms)
             const timestampDisplay = Math.abs(ntpOffset) > 100 ?
-                `${timestamp} (NTP±${ntpOffset}ms)` : timestamp;
+                `${timestamp} (Clock±${ntpOffset}ms)` : timestamp;
             
             logEntry.innerHTML = `<span class="log-timestamp">${timestampDisplay} ${prefix}</span>${message}`;
             logContainer.appendChild(logEntry);
@@ -1959,9 +2099,9 @@
             document.getElementById('byteCount').textContent = totalBytesReceived.toLocaleString();
             updateDataRate(data.length);
             
-            // Use NTP-adjusted timestamp for serial monitor
-            const ntpAdjustedTime = new Date(Date.now() + ntpOffset);
-            const timestamp = ntpAdjustedTime.toLocaleTimeString();
+            // Use streaming clock-adjusted timestamp for serial monitor
+            const clockAdjustedTime = new Date(Date.now() + ntpOffset);
+            const timestamp = clockAdjustedTime.toLocaleTimeString();
             const entry = document.createElement('div');
             entry.style.marginBottom = '1px';
             entry.style.padding = '1px 5px';
@@ -2593,9 +2733,9 @@
                     log('MQTT publish failed: ' + err.message, 'error');
                 } else {
                     log('Published to MQTT topic: ' + topic + ' - Message: ' + message);
-                    // Use NTP-adjusted timestamp for published messages
-                    const ntpAdjustedTimestamp = new Date(Date.now() + ntpOffset);
-                    displayMqttMessage(topic, message, 'PUBLISHED', ntpAdjustedTimestamp);
+                    // Use streaming clock-adjusted timestamp for published messages
+                    const clockAdjustedTimestamp = new Date(Date.now() + ntpOffset);
+                    displayMqttMessage(topic, message, 'PUBLISHED', clockAdjustedTimestamp);
                 }
             });
         }
@@ -2617,10 +2757,10 @@
         }
 
         function handleMqttMessage(topic, message) {
-            // Use NTP-adjusted timestamp for MQTT message handling
-            const ntpAdjustedTimestamp = new Date(Date.now() + ntpOffset);
+            // Use streaming clock-adjusted timestamp for MQTT message handling
+            const clockAdjustedTimestamp = new Date(Date.now() + ntpOffset);
             log('MQTT message received on topic "' + topic + '": ' + message);
-            displayMqttMessage(topic, message, 'RECEIVED', ntpAdjustedTimestamp);
+            displayMqttMessage(topic, message, 'RECEIVED', clockAdjustedTimestamp);
 
             // Handle synchronized command coordination
             if (topic === 'esp32/sync_commands') {
@@ -2658,22 +2798,22 @@
                     // Handle single synchronized command
                     const targetNtpExecutionTime = syncData.targetExecutionTime;
                     
-                    // Calculate local delay accounting for our NTP offset
-                    // We need to execute when our local time + ntpOffset equals the target NTP time
+                    // Calculate local delay accounting for our streaming clock offset
+                    // We need to execute when our local time + ntpOffset equals the target streaming clock time
                     const targetLocalTime = targetNtpExecutionTime - ntpOffset;
                     const localDelay = targetLocalTime - Date.now();
                     
                     if (localDelay > 0) {
-                        log(`Joining synchronized execution at NTP time ${new Date(targetNtpExecutionTime).toLocaleTimeString()}`);
+                        log(`Joining synchronized execution at streaming clock time ${new Date(targetNtpExecutionTime).toLocaleTimeString()}`);
                         log(`Local target time: ${new Date(targetLocalTime).toLocaleTimeString()}, delay: ${localDelay}ms`);
-                        log(`Using NTP offset: ${ntpOffset}ms`);
+                        log(`Using streaming clock offset: ${ntpOffset}ms`);
                         
                         setTimeout(() => {
                             const actualExecutionTime = Date.now();
-                            const actualNtpTime = actualExecutionTime + ntpOffset;
-                            const syncAccuracy = Math.abs(actualNtpTime - targetNtpExecutionTime);
-                            log(`Executing synchronized command (NTP accuracy: ±${syncAccuracy}ms from target)`);
-                            log(`Target NTP: ${new Date(targetNtpExecutionTime).toLocaleTimeString()}, Actual NTP: ${new Date(actualNtpTime).toLocaleTimeString()}`);
+                            const actualClockTime = actualExecutionTime + ntpOffset;
+                            const syncAccuracy = Math.abs(actualClockTime - targetNtpExecutionTime);
+                            log(`Executing synchronized command (Streaming clock accuracy: ±${syncAccuracy}ms from target)`);
+                            log(`Target Clock: ${new Date(targetNtpExecutionTime).toLocaleTimeString()}, Actual Clock: ${new Date(actualClockTime).toLocaleTimeString()}`);
                             executeCommand(syncData.command);
                         }, localDelay);
                     } else {
@@ -2684,14 +2824,14 @@
                     // Handle synchronized BPM sequence
                     const startNtpExecutionTime = syncData.startExecutionTime;
                     
-                    // Calculate local delay accounting for our NTP offset
+                    // Calculate local delay accounting for our streaming clock offset
                     const startLocalTime = startNtpExecutionTime - ntpOffset;
                     const initialDelay = startLocalTime - Date.now();
                     
                     if (initialDelay > -5000) { // Allow joining within 5 seconds of start
                         log(`Joining synchronized BPM sequence: ${syncData.bpm} BPM, ${syncData.division} division`);
-                        log(`Start NTP time: ${new Date(startNtpExecutionTime).toLocaleTimeString()}, local delay: ${initialDelay}ms`);
-                        log(`Using NTP offset: ${ntpOffset}ms`);
+                        log(`Start streaming clock time: ${new Date(startNtpExecutionTime).toLocaleTimeString()}, local delay: ${initialDelay}ms`);
+                        log(`Using streaming clock offset: ${ntpOffset}ms`);
                         
                         // Execute the synchronized BPM sequence
                         executeSyncBpmSequence(syncData, initialDelay);
@@ -2726,17 +2866,17 @@
             
             const executeBpmBeat = () => {
                 if (currentBeat < beatCount || loop) {
-                    // Calculate exact execution time for this beat using NTP-adjusted timing
-                    const beatNtpExecutionTime = (startSyncPointUnixTime * 1000) + (currentBeat * intervalMs);
-                    const beatLocalTime = beatNtpExecutionTime - ntpOffset;
+                    // Calculate exact execution time for this beat using streaming clock-adjusted timing
+                    const beatClockExecutionTime = (startSyncPointUnixTime * 1000) + (currentBeat * intervalMs);
+                    const beatLocalTime = beatClockExecutionTime - ntpOffset;
                     const localDelay = beatLocalTime - Date.now();
                     
                     if (localDelay <= 0) {
                         // Execute immediately if we're at or past the target time
                         const actualExecutionTime = Date.now();
-                        const actualNtpTime = actualExecutionTime + ntpOffset;
-                        const syncAccuracy = Math.abs(actualNtpTime - beatNtpExecutionTime);
-                        log(`Sync BPM beat ${currentBeat + 1} executed (NTP accuracy: ±${syncAccuracy}ms)`);
+                        const actualClockTime = actualExecutionTime + ntpOffset;
+                        const syncAccuracy = Math.abs(actualClockTime - beatClockExecutionTime);
+                        log(`Sync BPM beat ${currentBeat + 1} executed (Streaming clock accuracy: ±${syncAccuracy}ms)`);
                         
                         executeCommand(command);
                         
@@ -2752,9 +2892,9 @@
                         // Schedule execution at exact sync time
                         setTimeout(() => {
                             const actualExecutionTime = Date.now();
-                            const actualNtpTime = actualExecutionTime + ntpOffset;
-                            const syncAccuracy = Math.abs(actualNtpTime - beatNtpExecutionTime);
-                            log(`Sync BPM beat ${currentBeat + 1} executed (NTP accuracy: ±${syncAccuracy}ms)`);
+                            const actualClockTime = actualExecutionTime + ntpOffset;
+                            const syncAccuracy = Math.abs(actualClockTime - beatClockExecutionTime);
+                            log(`Sync BPM beat ${currentBeat + 1} executed (Streaming clock accuracy: ±${syncAccuracy}ms)`);
                             
                             executeCommand(command);
                             
@@ -2912,10 +3052,10 @@
                             currentBeat = 0; // Reset for loop
                         }
                         
-                        // Update next execution time with new interval and NTP offset
-                        const nextNtpTime = Date.now() + ntpOffset + intervalMs;
-                        const nextTime = new Date(nextNtpTime);
-                        document.getElementById('nextExecution').textContent = nextTime.toLocaleTimeString() + ' (NTP)';
+                        // Update next execution time with new interval and streaming clock offset
+                        const nextClockTime = Date.now() + ntpOffset + intervalMs;
+                        const nextTime = new Date(nextClockTime);
+                        document.getElementById('nextExecution').textContent = nextTime.toLocaleTimeString() + ' (Stream)';
                         
                         if (currentBeat < beatCount || loop) {
                             bpmInterval = setTimeout(executeBpmCommand, intervalMs);
@@ -3010,7 +3150,7 @@
             entry.style.fontSize = '13px';
             entry.style.lineHeight = '1.3';
 
-            // Use the already NTP-adjusted timestamp passed from the caller
+            // Use the already streaming clock-adjusted timestamp passed from the caller
             const timeStr = timestamp.toLocaleTimeString();
             
             if (type === 'RECEIVED') {
