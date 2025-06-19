@@ -1217,40 +1217,66 @@
             }
         }
 
-        // Schedule command with time delay
+        // Schedule command with time delay using NTP-synchronized execution
         function scheduleDelayCommand(command) {
             const delay = parseInt(document.getElementById('delayInput').value);
             
-            // Calculate target NTP time for execution (absolute time reference)
+            // Create a synchronized execution time using NTP-adjusted time
+            // Use NTP-corrected Unix timestamp for true synchronization across networks
             const currentNtpTime = Date.now() + ntpOffset;
-            const targetNtpTime = currentNtpTime + (delay * 1000);
+            const currentNtpUnixTime = Math.floor(currentNtpTime / 1000);
+            const syncPointUnixTime = currentNtpUnixTime + Math.ceil(delay) + 1; // Add 1 second buffer for sync
+            const targetNtpExecutionTime = syncPointUnixTime * 1000; // Convert back to milliseconds
             
-            // Calculate when to execute based on local time to hit the target NTP time
-            const executeAtLocalTime = targetNtpTime - ntpOffset;
-            const localDelayMs = executeAtLocalTime - Date.now();
+            // Calculate local delay accounting for NTP offset
+            // We need to execute when our local time + ntpOffset equals the target NTP time
+            const targetLocalTime = targetNtpExecutionTime - ntpOffset;
+            const localDelayMs = targetLocalTime - Date.now();
             
             const commandId = Date.now();
 
             scheduledCommands.push({
                 id: commandId,
                 command: command,
-                executeTime: targetNtpTime,
-                localExecuteTime: executeAtLocalTime,
+                executeTime: targetNtpExecutionTime,
+                syncPointUnixTime: syncPointUnixTime,
                 devices: connectedPorts.length,
                 mode: 'delay'
             });
 
-            log(`Command scheduled for NTP time: ${new Date(targetNtpTime).toLocaleTimeString()}`);
-            log(`Local execution time: ${new Date(executeAtLocalTime).toLocaleTimeString()}`);
-            log(`NTP offset: ${ntpOffset}ms, Local delay: ${localDelayMs}ms`);
+            log(`Command scheduled for synchronized execution at NTP Unix time: ${syncPointUnixTime} (${new Date(targetNtpExecutionTime).toLocaleString()})`);
+            log(`NTP target time: ${new Date(targetNtpExecutionTime).toLocaleTimeString()}, Local target: ${new Date(targetLocalTime).toLocaleTimeString()}`);
+            log(`NTP offset: ${ntpOffset}ms, Local delay to sync point: ${localDelayMs}ms`);
             
             document.getElementById('commandStatus').className = 'status syncing';
-            document.getElementById('commandStatus').textContent = `Command scheduled for ${new Date(targetNtpTime).toLocaleTimeString()} NTP time`;
+            document.getElementById('commandStatus').textContent = `Command scheduled for NTP-synchronized execution at ${new Date(targetNtpExecutionTime).toLocaleTimeString()}`;
             document.getElementById('cancelBtn').disabled = false;
 
-            // Use the calculated local delay to hit the target NTP time
+            // Publish sync command via MQTT for multi-device coordination
+            if (mqttConnected) {
+                const syncMessage = {
+                    type: 'sync_command',
+                    command: command,
+                    syncPointUnixTime: syncPointUnixTime,
+                    targetExecutionTime: targetNtpExecutionTime,
+                    ntpOffset: ntpOffset, // Include our NTP offset for reference
+                    source: document.getElementById('mqttClientId').value
+                };
+                
+                mqttClient.publish('esp32/sync_commands', JSON.stringify(syncMessage), { qos: 1 }, function (err) {
+                    if (!err) {
+                        log(`Sync command published to MQTT for multi-device coordination`);
+                    }
+                });
+            }
+
+            // Execute at the exact sync point, accounting for NTP offset
             setTimeout(() => {
-                log(`Executing command at NTP time: ${new Date(Date.now() + ntpOffset).toLocaleTimeString()}`);
+                const actualExecutionTime = Date.now();
+                const actualNtpTime = actualExecutionTime + ntpOffset;
+                const syncAccuracy = Math.abs(actualNtpTime - targetNtpExecutionTime);
+                log(`Executing synchronized command (NTP accuracy: ±${syncAccuracy}ms from target)`);
+                log(`Target NTP time: ${new Date(targetNtpExecutionTime).toLocaleTimeString()}, Actual NTP time: ${new Date(actualNtpTime).toLocaleTimeString()}`);
                 executeCommand(command);
             }, Math.max(0, localDelayMs));
         }
@@ -2340,6 +2366,12 @@
             log('MQTT message received on topic "' + topic + '": ' + message);
             displayMqttMessage(topic, message, 'RECEIVED', ntpAdjustedTimestamp);
 
+            // Handle synchronized command coordination
+            if (topic === 'esp32/sync_commands') {
+                handleSyncCommand(message);
+                return;
+            }
+
             // Handle special rhythm control topic
             if (topic === 'trigger_rhythm') {
                 handleRhythmControl(message);
@@ -2350,6 +2382,144 @@
             if (document.getElementById('autoExecuteMqtt').checked && connectedPorts.length > 0) {
                 log('Auto-executing MQTT command on serial devices: ' + message);
                 executeCommand(message);
+            }
+        }
+        
+        // Handle synchronized command execution from MQTT
+        function handleSyncCommand(message) {
+            try {
+                const syncData = JSON.parse(message);
+                const myClientId = document.getElementById('mqttClientId').value;
+                
+                // Ignore messages from ourselves to prevent loops
+                if (syncData.source === myClientId) {
+                    return;
+                }
+                
+                log(`Received sync command from ${syncData.source}: ${syncData.type}`);
+                
+                if (syncData.type === 'sync_command') {
+                    // Handle single synchronized command
+                    const targetNtpExecutionTime = syncData.targetExecutionTime;
+                    
+                    // Calculate local delay accounting for our NTP offset
+                    // We need to execute when our local time + ntpOffset equals the target NTP time
+                    const targetLocalTime = targetNtpExecutionTime - ntpOffset;
+                    const localDelay = targetLocalTime - Date.now();
+                    
+                    if (localDelay > 0) {
+                        log(`Joining synchronized execution at NTP time ${new Date(targetNtpExecutionTime).toLocaleTimeString()}`);
+                        log(`Local target time: ${new Date(targetLocalTime).toLocaleTimeString()}, delay: ${localDelay}ms`);
+                        log(`Using NTP offset: ${ntpOffset}ms`);
+                        
+                        setTimeout(() => {
+                            const actualExecutionTime = Date.now();
+                            const actualNtpTime = actualExecutionTime + ntpOffset;
+                            const syncAccuracy = Math.abs(actualNtpTime - targetNtpExecutionTime);
+                            log(`Executing synchronized command (NTP accuracy: ±${syncAccuracy}ms from target)`);
+                            log(`Target NTP: ${new Date(targetNtpExecutionTime).toLocaleTimeString()}, Actual NTP: ${new Date(actualNtpTime).toLocaleTimeString()}`);
+                            executeCommand(syncData.command);
+                        }, localDelay);
+                    } else {
+                        log(`Sync command target time already passed (${Math.abs(localDelay)}ms ago), skipping execution`);
+                    }
+                    
+                } else if (syncData.type === 'sync_bpm') {
+                    // Handle synchronized BPM sequence
+                    const startNtpExecutionTime = syncData.startExecutionTime;
+                    
+                    // Calculate local delay accounting for our NTP offset
+                    const startLocalTime = startNtpExecutionTime - ntpOffset;
+                    const initialDelay = startLocalTime - Date.now();
+                    
+                    if (initialDelay > -5000) { // Allow joining within 5 seconds of start
+                        log(`Joining synchronized BPM sequence: ${syncData.bpm} BPM, ${syncData.division} division`);
+                        log(`Start NTP time: ${new Date(startNtpExecutionTime).toLocaleTimeString()}, local delay: ${initialDelay}ms`);
+                        log(`Using NTP offset: ${ntpOffset}ms`);
+                        
+                        // Execute the synchronized BPM sequence
+                        executeSyncBpmSequence(syncData, initialDelay);
+                    } else {
+                        log(`BPM sync sequence start time already passed (${Math.abs(initialDelay)}ms ago), skipping`);
+                    }
+                }
+                
+            } catch (error) {
+                log('Error handling sync command: ' + error.message, 'error');
+            }
+        }
+        
+        // Execute synchronized BPM sequence received from MQTT
+        function executeSyncBpmSequence(syncData, initialDelay) {
+            const { command, bpm, division, beatCount, loop, intervalMs, startSyncPointUnixTime } = syncData;
+            let currentBeat = 0;
+            
+            // If we're starting late, calculate which beat we should be on
+            if (initialDelay < 0) {
+                const elapsedMs = Math.abs(initialDelay);
+                currentBeat = Math.floor(elapsedMs / intervalMs);
+                if (currentBeat >= beatCount && !loop) {
+                    log(`BPM sequence already completed, not joining`);
+                    return;
+                }
+                if (loop) {
+                    currentBeat = currentBeat % beatCount;
+                }
+                log(`Joining BPM sequence at beat ${currentBeat + 1} (${elapsedMs}ms late)`);
+            }
+            
+            const executeBpmBeat = () => {
+                if (currentBeat < beatCount || loop) {
+                    // Calculate exact execution time for this beat using NTP-adjusted timing
+                    const beatNtpExecutionTime = (startSyncPointUnixTime * 1000) + (currentBeat * intervalMs);
+                    const beatLocalTime = beatNtpExecutionTime - ntpOffset;
+                    const localDelay = beatLocalTime - Date.now();
+                    
+                    if (localDelay <= 0) {
+                        // Execute immediately if we're at or past the target time
+                        const actualExecutionTime = Date.now();
+                        const actualNtpTime = actualExecutionTime + ntpOffset;
+                        const syncAccuracy = Math.abs(actualNtpTime - beatNtpExecutionTime);
+                        log(`Sync BPM beat ${currentBeat + 1} executed (NTP accuracy: ±${syncAccuracy}ms)`);
+                        
+                        executeCommand(command);
+                        
+                        currentBeat++;
+                        if (loop && currentBeat >= beatCount) {
+                            currentBeat = 0;
+                        }
+                        
+                        if (currentBeat < beatCount || loop) {
+                            setTimeout(executeBpmBeat, 0);
+                        }
+                    } else {
+                        // Schedule execution at exact sync time
+                        setTimeout(() => {
+                            const actualExecutionTime = Date.now();
+                            const actualNtpTime = actualExecutionTime + ntpOffset;
+                            const syncAccuracy = Math.abs(actualNtpTime - beatNtpExecutionTime);
+                            log(`Sync BPM beat ${currentBeat + 1} executed (NTP accuracy: ±${syncAccuracy}ms)`);
+                            
+                            executeCommand(command);
+                            
+                            currentBeat++;
+                            if (loop && currentBeat >= beatCount) {
+                                currentBeat = 0;
+                            }
+                            
+                            if (currentBeat < beatCount || loop) {
+                                setTimeout(executeBpmBeat, 0);
+                            }
+                        }, localDelay);
+                    }
+                }
+            };
+            
+            // Start the sequence
+            if (initialDelay > 0) {
+                setTimeout(executeBpmBeat, initialDelay);
+            } else {
+                executeBpmBeat();
             }
         }
 
