@@ -1,0 +1,1719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Serial Sync Control</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .main-content {
+            padding: 30px;
+        }
+
+        .section {
+            margin-bottom: 30px;
+            padding: 25px;
+            border: 2px solid #ecf0f1;
+            border-radius: 10px;
+            background: #fafafa;
+        }
+
+        .section h2 {
+            color: #2c3e50;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        label {
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        input, select, textarea, button {
+            padding: 12px;
+            border: 2px solid #bdc3c7;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+        }
+
+        button {
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(52, 152, 219, 0.3);
+        }
+
+        button:disabled {
+            background: #95a5a6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+        }
+
+        .btn-danger:hover {
+            box-shadow: 0 5px 15px rgba(231, 76, 60, 0.3);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
+        }
+
+        .btn-success:hover {
+            box-shadow: 0 5px 15px rgba(39, 174, 96, 0.3);
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-weight: 600;
+        }
+
+        .status.connected {
+            background: #d5f4e6;
+            color: #27ae60;
+            border: 2px solid #27ae60;
+        }
+
+        .status.disconnected {
+            background: #fadbd8;
+            color: #e74c3c;
+            border: 2px solid #e74c3c;
+        }
+
+        .status.syncing {
+            background: #fef9e7;
+            color: #f39c12;
+            border: 2px solid #f39c12;
+        }
+
+        .device-list {
+            display: grid;
+            gap: 15px;
+        }
+
+        .device-item {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            border: 2px solid #ecf0f1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .device-info {
+            flex: 1;
+        }
+
+        .device-name {
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+
+        .device-status {
+            font-size: 0.9em;
+            opacity: 0.7;
+        }
+
+        .log-container {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 8px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+        }
+
+        .log-timestamp {
+            color: #3498db;
+            margin-right: 10px;
+        }
+
+        .sync-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .sync-stat {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            border: 2px solid #ecf0f1;
+        }
+
+        .sync-stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #3498db;
+            margin-bottom: 5px;
+        }
+
+        .sync-stat-label {
+            color: #7f8c8d;
+            font-size: 0.9em;
+        }
+
+        @media (max-width: 768px) {
+            .controls {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+            
+            .main-content {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔗 Serial Sync Control</h1>
+            <p>Synchronized command execution across multiple serial devices</p>
+        </div>
+
+        <div class="main-content">
+            <!-- Connection Section -->
+            <div class="section">
+                <h2>🔌 Device Connection</h2>
+                <div class="controls">
+                    <div class="control-group">
+                        <button id="connectBtn" onclick="connectSerial()">Connect Serial Device</button>
+                    </div>
+                    <div class="control-group">
+                        <button id="disconnectBtn" onclick="disconnectSerial()" disabled>Disconnect All</button>
+                    </div>
+                </div>
+                <div id="connectionStatus" class="status disconnected">
+                    No devices connected
+                </div>
+            </div>
+
+            <!-- Connected Devices -->
+            <div class="section">
+                <h2>📱 Connected Devices</h2>
+                <div id="deviceList" class="device-list">
+                    <p style="text-align: center; color: #7f8c8d; font-style: italic;">No devices connected yet</p>
+                </div>
+            </div>
+
+            <!-- Synchronization Status -->
+            <div class="section">
+                <h2>⏰ Synchronization Status</h2>
+                <div class="sync-info">
+                    <div class="sync-stat">
+                        <div id="ntpOffset" class="sync-stat-value">--</div>
+                        <div class="sync-stat-label">NTP Offset (ms)</div>
+                    </div>
+                    <div class="sync-stat">
+                        <div id="connectedCount" class="sync-stat-value">0</div>
+                        <div class="sync-stat-label">Connected Devices</div>
+                    </div>
+                    <div class="sync-stat">
+                        <div id="lastSync" class="sync-stat-value">--</div>
+                        <div class="sync-stat-label">Last Sync</div>
+                    </div>
+                </div>
+                <button id="syncBtn" onclick="syncTime()" class="btn-success">🔄 Sync Time with NTP</button>
+            </div>
+
+            <!-- Command Control -->
+            <div class="section">
+                <h2>⚡ Command Control</h2>
+                <div class="controls">
+                    <div class="control-group">
+                        <label for="commandInput">Command to Send:</label>
+                        <textarea id="commandInput" rows="3" placeholder="Enter command to send to all devices..."></textarea>
+                    </div>
+                    <div class="control-group">
+                        <label for="schedulingMode">Scheduling Mode:</label>
+                        <select id="schedulingMode" onchange="updateSchedulingMode()">
+                            <option value="delay">Time Delay</option>
+                            <option value="bpm">BPM (Beats Per Minute)</option>
+                            <option value="fps">FPS (Frames Per Second)</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- Time Delay Mode -->
+                <div class="controls" id="delayModeControls">
+                    <div class="control-group">
+                        <label for="delayInput">Execution Delay (seconds):</label>
+                        <input type="number" id="delayInput" value="5" min="1" max="3600">
+                    </div>
+                </div>
+                
+                <!-- BPM Mode -->
+                <div class="controls" id="bpmModeControls" style="display: none;">
+                    <div class="control-group">
+                        <label for="bpmInput">BPM (Beats Per Minute):</label>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <input type="number" id="bpmInput" value="120" min="30" max="300" step="0.1" style="flex: 1;">
+                            <button id="tapTempoBtn" onclick="tapTempo()" class="btn-success" style="padding: 8px 12px; font-size: 14px;">🥁 Tap Tempo</button>
+                        </div>
+                        <div id="tapTempoInfo" style="font-size: 12px; color: #7f8c8d; margin-top: 5px; display: none;">
+                            Tap the button to the beat. BPM will be calculated from your taps.
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label for="beatDivision">Beat Division:</label>
+                        <select id="beatDivision">
+                            <option value="1">Whole Note (1/1)</option>
+                            <option value="2">Half Note (1/2)</option>
+                            <option value="4" selected>Quarter Note (1/4)</option>
+                            <option value="8">Eighth Note (1/8)</option>
+                            <option value="16">Sixteenth Note (1/16)</option>
+                            <option value="32">Thirty-second Note (1/32)</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label for="beatCount">Number of Beats:</label>
+                        <input type="number" id="beatCount" value="4" min="1" max="64">
+                    </div>
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="bpmLoop"> Loop continuously
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- FPS Mode -->
+                <div class="controls" id="fpsModeControls" style="display: none;">
+                    <div class="control-group">
+                        <label for="fpsInput">FPS (Frames Per Second):</label>
+                        <select id="fpsInput">
+                            <option value="23.976">23.976 (Film)</option>
+                            <option value="24">24 (Cinema)</option>
+                            <option value="25">25 (PAL)</option>
+                            <option value="29.97">29.97 (NTSC)</option>
+                            <option value="30" selected>30 (Standard)</option>
+                            <option value="50">50 (PAL Progressive)</option>
+                            <option value="59.94">59.94 (NTSC Progressive)</option>
+                            <option value="60">60 (High Frame Rate)</option>
+                            <option value="120">120 (Ultra High)</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label for="frameInterval">Frame Interval:</label>
+                        <input type="number" id="frameInterval" value="30" min="1" max="3600" placeholder="Execute every N frames">
+                    </div>
+                    <div class="control-group">
+                        <label for="totalFrames">Total Frames:</label>
+                        <input type="number" id="totalFrames" value="300" min="1" max="36000" placeholder="Total frames to execute">
+                    </div>
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="fpsLoop"> Loop continuously
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="controls">
+                    <button id="sendBtn" onclick="scheduleCommand()" disabled class="btn-success">📤 Schedule Command</button>
+                    <button id="cancelBtn" onclick="cancelScheduled()" disabled class="btn-danger">❌ Cancel Scheduled</button>
+                    <button id="startMetronome" onclick="toggleMetronome()" class="btn-success" style="display: none;">🎵 Start Metronome</button>
+                </div>
+                
+                <!-- Timing Info Display -->
+                <div class="sync-info" id="timingInfo" style="display: none;">
+                    <div class="sync-stat">
+                        <div id="currentTiming" class="sync-stat-value">--</div>
+                        <div class="sync-stat-label">Current Timing</div>
+                    </div>
+                    <div class="sync-stat">
+                        <div id="nextExecution" class="sync-stat-value">--</div>
+                        <div class="sync-stat-label">Next Execution</div>
+                    </div>
+                    <div class="sync-stat">
+                        <div id="executionCount" class="sync-stat-value">0</div>
+                        <div class="sync-stat-label">Executions</div>
+                    </div>
+                </div>
+                
+                <div id="commandStatus" class="status disconnected">
+                    Ready to send commands
+                </div>
+            </div>
+
+            <!-- Serial Monitor & Raw Testing -->
+            <div class="section">
+                <h2>🖥️ Serial Monitor & Raw Testing</h2>
+                <div class="controls">
+                    <div class="control-group">
+                        <label for="rawInput">Raw Input (test individual characters):</label>
+                        <input type="text" id="rawInput" placeholder="Type here to send raw characters..." maxlength="1">
+                        <small style="color: #7f8c8d;">Each character will be sent immediately as you type</small>
+                    </div>
+                    <div class="control-group">
+                        <label for="testCommand">Test Command:</label>
+                        <input type="text" id="testCommand" placeholder="Enter command to test..." value="1">
+                    </div>
+                </div>
+                <div class="controls">
+                    <button onclick="sendRaw()" disabled id="sendRawBtn" class="btn-success">Send Raw (no line ending)</button>
+                    <button onclick="sendWithCR()" disabled id="sendCRBtn" class="btn-success">Send + CR (\\r)</button>
+                    <button onclick="sendWithLF()" disabled id="sendLFBtn" class="btn-success">Send + LF (\\n)</button>
+                    <button onclick="sendWithCRLF()" disabled id="sendCRLFBtn" class="btn-success">Send + CRLF (\\r\\n)</button>
+                </div>
+                
+                <!-- Enhanced Serial Monitor -->
+                <div class="controls">
+                    <div class="control-group">
+                        <label>📡 Serial Data Monitor (Real-time):</label>
+                        <div style="display: flex; gap: 10px; margin-bottom: 10px; align-items: center;">
+                            <button onclick="clearMonitor()">Clear Monitor</button>
+                            <button onclick="pauseMonitor()" id="pauseBtn">⏸️ Pause</button>
+                            <button onclick="saveMonitorLog()">💾 Save Log</button>
+                            <label style="margin-left: 20px;">
+                                <input type="checkbox" id="hexDisplay"> Show as HEX
+                            </label>
+                            <label>
+                                <input type="checkbox" id="autoScroll" checked> Auto-scroll
+                            </label>
+                            <label>
+                                <input type="checkbox" id="showTimestamps" checked> Timestamps
+                            </label>
+                            <label>
+                                <input type="checkbox" id="filterEmpty"> Filter Empty
+                            </label>
+                        </div>
+                        <div style="display: flex; gap: 10px; margin-bottom: 10px; align-items: center; flex-wrap: wrap;">
+                            <label for="baudRateDisplay">Baud Rate:</label>
+                            <select id="baudRateDisplay" onchange="updateBaudRate()">
+                                <option value="1200">1200</option>
+                                <option value="2400">2400</option>
+                                <option value="4800">4800</option>
+                                <option value="9600">9600</option>
+                                <option value="19200">19200</option>
+                                <option value="38400">38400</option>
+                                <option value="57600">57600</option>
+                                <option value="115200" selected>115200</option>
+                                <option value="230400">230400</option>
+                                <option value="460800">460800</option>
+                                <option value="921600">921600</option>
+                            </select>
+                            <label for="encodingSelect" style="margin-left: 15px;">Encoding:</label>
+                            <select id="encodingSelect" onchange="updateEncoding()">
+                                <option value="utf-8" selected>UTF-8</option>
+                                <option value="ascii">ASCII</option>
+                                <option value="latin1">Latin-1</option>
+                                <option value="binary">Binary/Raw</option>
+                            </select>
+                            <button onclick="detectBaudRate()" style="margin-left: 15px; padding: 5px 10px; font-size: 12px;">🔍 Auto-detect Baud</button>
+                        </div>
+                        <div style="display: flex; gap: 10px; margin-bottom: 10px; align-items: center;">
+                            <span>📊 Bytes: <span id="byteCount">0</span></span>
+                            <span style="margin-left: 10px;">📈 Rate: <span id="dataRate">0 B/s</span></span>
+                            <span style="margin-left: 15px;">🎯 Quality: <span id="dataQuality">Unknown</span></span>
+                            <span style="margin-left: 15px;">📡 Pattern: <span id="dataPattern">Analyzing...</span></span>
+                        </div>
+                        <div id="serialMonitor" class="log-container" style="height: 300px; background: #0d1117; color: #58a6ff; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 13px; border: 2px solid #30363d;">
+                            <div style="color: #7d8590; font-style: italic;">🔍 Monitoring serial data... Connect a device to see output.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Activity Log -->
+            <div class="section">
+                <h2>📋 Activity Log</h2>
+                <div id="logContainer" class="log-container">
+                    <div class="log-entry">
+                        <span class="log-timestamp">[System]</span>
+                        Serial Sync Control initialized. Ready to connect devices.
+                    </div>
+                </div>
+                <button onclick="clearLog()" style="margin-top: 10px;">Clear Log</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let connectedPorts = [];
+        let ntpOffset = 0;
+        let scheduledCommands = [];
+        let syncInterval;
+        let bpmInterval;
+        let fpsInterval;
+        let metronomeInterval;
+        let isMetronomeRunning = false;
+        let executionCounter = 0;
+        let currentSchedulingMode = 'delay';
+        let currentBpmLoop = false;
+        let currentFpsLoop = false;
+        let tapTimes = [];
+        let tapTimeoutId = null;
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            log('Application started');
+            checkSerialSupport();
+            startNTPSync();
+            startDataRateMonitoring();
+            
+            // Initialize baud rate (ESP32 commonly uses 115200)
+            window.selectedBaudRate = 115200;
+            document.getElementById('baudRateDisplay').value = '115200';
+            
+            // Add event listeners for timing updates
+            document.getElementById('bpmInput').addEventListener('input', updateBpmTiming);
+            document.getElementById('beatDivision').addEventListener('change', updateBpmTiming);
+            document.getElementById('fpsInput').addEventListener('change', updateFpsTiming);
+            document.getElementById('frameInterval').addEventListener('input', updateFpsTiming);
+        });
+
+        // Check if Web Serial API is supported
+        function checkSerialSupport() {
+            if (!('serial' in navigator)) {
+                log('ERROR: Web Serial API not supported. Please use Chrome/Edge browser.', 'error');
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('connectionStatus').textContent = 'Web Serial API not supported';
+                return false;
+            }
+            log('Web Serial API supported');
+            return true;
+        }
+
+        // Connect to a serial device
+        async function connectSerial() {
+            try {
+                log('Requesting serial port...');
+                const port = await navigator.serial.requestPort();
+                
+                // Use selected baud rate or default to 115200 (common for ESP32)
+                const baudRate = window.selectedBaudRate || 115200;
+                
+                log(`Opening serial connection at ${baudRate} baud...`);
+                await port.open({
+                    baudRate: baudRate,
+                    dataBits: 8,
+                    stopBits: 1,
+                    parity: 'none',
+                    bufferSize: 4096,
+                    flowControl: 'none'
+                });
+
+                const deviceInfo = {
+                    port: port,
+                    id: `device_${Date.now()}`,
+                    name: `ESP32 Device ${connectedPorts.length + 1}`,
+                    connected: true,
+                    baudRate: baudRate,
+                    reader: null
+                };
+
+                connectedPorts.push(deviceInfo);
+
+                updateDeviceList();
+                updateConnectionStatus();
+                log(`Connected to ESP32 device at ${baudRate} baud (${connectedPorts.length} total)`);
+
+                // Set up reader for incoming data
+                setupPortReader(port, connectedPorts.length - 1);
+
+            } catch (error) {
+                log(`Failed to connect: ${error.message}`, 'error');
+                if (error.name === 'NetworkError') {
+                    log('Tip: Make sure the device is not already connected in another application', 'warning');
+                }
+            }
+        }
+
+        // Set up reader for a port
+        async function setupPortReader(port, index) {
+            try {
+                const reader = port.readable.getReader();
+                let buffer = new Uint8Array(0);
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    
+                    // Concatenate new data to buffer
+                    const newBuffer = new Uint8Array(buffer.length + value.length);
+                    newBuffer.set(buffer);
+                    newBuffer.set(value, buffer.length);
+                    buffer = newBuffer;
+                    
+                    // Display raw data in serial monitor immediately
+                    displayInMonitor(value, `RX Dev${index + 1}`);
+                    
+                    // Try to decode and process text data
+                    try {
+                        const decoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true });
+                        const text = decoder.decode(buffer, { stream: false });
+                        
+                        // Process complete lines (split on both \n and \r\n)
+                        const lines = text.split(/\r?\n/);
+                        
+                        // Keep the last incomplete line in buffer
+                        if (lines.length > 1) {
+                            const lastLine = lines.pop();
+                            
+                            // Process complete lines
+                            for (const line of lines) {
+                                const cleanLine = line.trim();
+                                if (cleanLine.length > 0 || !document.getElementById('filterEmpty')?.checked) {
+                                    log(`Device ${index + 1} received: ${cleanLine}`);
+                                }
+                            }
+                            
+                            // Update buffer with remaining incomplete line
+                            if (lastLine) {
+                                const encoder = new TextEncoder();
+                                buffer = encoder.encode(lastLine);
+                            } else {
+                                buffer = new Uint8Array(0);
+                            }
+                        }
+                    } catch (decodeError) {
+                        // If decoding fails, keep accumulating bytes
+                        // This handles cases where UTF-8 sequences are split across reads
+                    }
+                    
+                    // Prevent buffer from growing too large
+                    if (buffer.length > 4096) {
+                        // Force process whatever we have and reset
+                        try {
+                            const decoder = new TextDecoder('utf-8', { fatal: false });
+                            const text = decoder.decode(buffer);
+                            if (text.trim().length > 0) {
+                                log(`Device ${index + 1} received (forced): ${text.trim()}`);
+                            }
+                        } catch (e) {
+                            log(`Device ${index + 1} received binary data (${buffer.length} bytes)`);
+                        }
+                        buffer = new Uint8Array(0);
+                    }
+                }
+                
+                // Process any remaining buffer content
+                if (buffer.length > 0) {
+                    try {
+                        const decoder = new TextDecoder('utf-8', { fatal: false });
+                        const text = decoder.decode(buffer);
+                        if (text.trim().length > 0) {
+                            log(`Device ${index + 1} received (final): ${text.trim()}`);
+                        }
+                    } catch (e) {
+                        log(`Device ${index + 1} final binary data (${buffer.length} bytes)`);
+                    }
+                }
+            } catch (error) {
+                log(`Reader error for device ${index + 1}: ${error.message}`, 'error');
+                // Try to release the reader
+                try {
+                    reader.releaseLock();
+                } catch (releaseError) {
+                    // Ignore release errors
+                }
+            }
+        }
+
+        // Disconnect all serial devices
+        async function disconnectSerial() {
+            try {
+                for (let i = 0; i < connectedPorts.length; i++) {
+                    if (connectedPorts[i].port && connectedPorts[i].connected) {
+                        await connectedPorts[i].port.close();
+                        log(`Disconnected device ${i + 1}`);
+                    }
+                }
+                connectedPorts = [];
+                updateDeviceList();
+                updateConnectionStatus();
+                log('All devices disconnected');
+            } catch (error) {
+                log(`Disconnect error: ${error.message}`, 'error');
+            }
+        }
+
+        // Update device list display
+        function updateDeviceList() {
+            const deviceList = document.getElementById('deviceList');
+            
+            if (connectedPorts.length === 0) {
+                deviceList.innerHTML = '<p style="text-align: center; color: #7f8c8d; font-style: italic;">No devices connected yet</p>';
+                return;
+            }
+
+            deviceList.innerHTML = connectedPorts.map((device, index) => `
+                <div class="device-item">
+                    <div class="device-info">
+                        <div class="device-name">${device.name}</div>
+                        <div class="device-status">Status: ${device.connected ? 'Connected' : 'Disconnected'}</div>
+                    </div>
+                    <button onclick="disconnectDevice(${index})" class="btn-danger">Disconnect</button>
+                </div>
+            `).join('');
+
+            document.getElementById('connectedCount').textContent = connectedPorts.length;
+        }
+
+        // Disconnect specific device
+        async function disconnectDevice(index) {
+            try {
+                if (connectedPorts[index] && connectedPorts[index].connected) {
+                    await connectedPorts[index].port.close();
+                    connectedPorts.splice(index, 1);
+                    updateDeviceList();
+                    updateConnectionStatus();
+                    log(`Device ${index + 1} disconnected`);
+                }
+            } catch (error) {
+                log(`Error disconnecting device ${index + 1}: ${error.message}`, 'error');
+            }
+        }
+
+        // Update connection status
+        function updateConnectionStatus() {
+            const status = document.getElementById('connectionStatus');
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            const sendBtn = document.getElementById('sendBtn');
+            
+            // Raw testing buttons
+            const rawButtons = ['sendRawBtn', 'sendCRBtn', 'sendLFBtn', 'sendCRLFBtn'];
+
+            if (connectedPorts.length === 0) {
+                status.className = 'status disconnected';
+                status.textContent = 'No devices connected';
+                disconnectBtn.disabled = true;
+                sendBtn.disabled = true;
+                
+                // Disable raw testing buttons
+                rawButtons.forEach(btnId => {
+                    const btn = document.getElementById(btnId);
+                    if (btn) btn.disabled = true;
+                });
+            } else {
+                status.className = 'status connected';
+                status.textContent = `${connectedPorts.length} device(s) connected`;
+                disconnectBtn.disabled = false;
+                sendBtn.disabled = false;
+                
+                // Enable raw testing buttons
+                rawButtons.forEach(btnId => {
+                    const btn = document.getElementById(btnId);
+                    if (btn) btn.disabled = false;
+                });
+            }
+        }
+
+        // NTP Time Synchronization
+        async function syncTime() {
+            try {
+                log('Syncing with NTP server...');
+                document.getElementById('syncBtn').disabled = true;
+                
+                // Simple NTP sync using multiple time servers
+                const timeServers = [
+                    'https://worldtimeapi.org/api/timezone/Etc/UTC',
+                    'https://timeapi.io/api/Time/current/zone?timeZone=UTC'
+                ];
+
+                let serverTime = null;
+                for (const server of timeServers) {
+                    try {
+                        const response = await fetch(server);
+                        const data = await response.json();
+                        
+                        if (data.datetime) {
+                            serverTime = new Date(data.datetime);
+                        } else if (data.dateTime) {
+                            serverTime = new Date(data.dateTime);
+                        }
+                        
+                        if (serverTime) break;
+                    } catch (e) {
+                        continue;
+                    }
+                }
+
+                if (serverTime) {
+                    const localTime = new Date();
+                    ntpOffset = serverTime.getTime() - localTime.getTime();
+                    
+                    document.getElementById('ntpOffset').textContent = ntpOffset;
+                    document.getElementById('lastSync').textContent = new Date().toLocaleTimeString();
+                    
+                    log(`Time synchronized. Offset: ${ntpOffset}ms`);
+                } else {
+                    throw new Error('Could not reach time servers');
+                }
+            } catch (error) {
+                log(`NTP sync failed: ${error.message}`, 'error');
+                // Fallback to local time
+                ntpOffset = 0;
+                document.getElementById('ntpOffset').textContent = '0 (Local)';
+            } finally {
+                document.getElementById('syncBtn').disabled = false;
+            }
+        }
+
+        // Start automatic NTP sync
+        function startNTPSync() {
+            syncTime(); // Initial sync
+            syncInterval = setInterval(syncTime, 300000); // Sync every 5 minutes
+        }
+
+        // Update scheduling mode UI
+        function updateSchedulingMode() {
+            const mode = document.getElementById('schedulingMode').value;
+            currentSchedulingMode = mode;
+            
+            // Hide all mode controls
+            document.getElementById('delayModeControls').style.display = 'none';
+            document.getElementById('bpmModeControls').style.display = 'none';
+            document.getElementById('fpsModeControls').style.display = 'none';
+            document.getElementById('startMetronome').style.display = 'none';
+            document.getElementById('timingInfo').style.display = 'none';
+            
+            // Reset tap tempo when switching modes
+            resetTapTempo();
+            
+            // Show relevant controls
+            switch(mode) {
+                case 'delay':
+                    document.getElementById('delayModeControls').style.display = 'grid';
+                    break;
+                case 'bpm':
+                    document.getElementById('bpmModeControls').style.display = 'grid';
+                    document.getElementById('startMetronome').style.display = 'inline-block';
+                    document.getElementById('timingInfo').style.display = 'grid';
+                    updateBpmTiming();
+                    break;
+                case 'fps':
+                    document.getElementById('fpsModeControls').style.display = 'grid';
+                    document.getElementById('timingInfo').style.display = 'grid';
+                    updateFpsTiming();
+                    break;
+            }
+            
+            log(`Scheduling mode changed to: ${mode.toUpperCase()}`);
+        }
+
+        // Update BPM timing display
+        function updateBpmTiming() {
+            const bpm = parseFloat(document.getElementById('bpmInput').value);
+            const division = parseInt(document.getElementById('beatDivision').value);
+            const intervalMs = (60000 / bpm) / (division / 4); // Convert to milliseconds per beat division
+            
+            document.getElementById('currentTiming').textContent = `${intervalMs.toFixed(1)}ms`;
+        }
+
+        // Update FPS timing display
+        function updateFpsTiming() {
+            const fps = parseFloat(document.getElementById('fpsInput').value);
+            const interval = parseInt(document.getElementById('frameInterval').value);
+            const frameTimeMs = 1000 / fps;
+            const executionIntervalMs = frameTimeMs * interval;
+            
+            document.getElementById('currentTiming').textContent = `${executionIntervalMs.toFixed(1)}ms`;
+        }
+
+        // Schedule command execution
+        function scheduleCommand() {
+            const command = document.getElementById('commandInput').value.trim();
+
+            if (!command) {
+                alert('Please enter a command to send');
+                return;
+            }
+
+            if (connectedPorts.length === 0) {
+                alert('No devices connected');
+                return;
+            }
+
+            // Cancel any existing scheduled commands
+            cancelScheduled();
+            executionCounter = 0;
+            document.getElementById('executionCount').textContent = '0';
+
+            switch(currentSchedulingMode) {
+                case 'delay':
+                    scheduleDelayCommand(command);
+                    break;
+                case 'bpm':
+                    scheduleBpmCommand(command);
+                    break;
+                case 'fps':
+                    scheduleFpsCommand(command);
+                    break;
+            }
+        }
+
+        // Schedule command with time delay
+        function scheduleDelayCommand(command) {
+            const delay = parseInt(document.getElementById('delayInput').value);
+            const executeTime = Date.now() + ntpOffset + (delay * 1000);
+            const commandId = Date.now();
+
+            scheduledCommands.push({
+                id: commandId,
+                command: command,
+                executeTime: executeTime,
+                devices: connectedPorts.length,
+                mode: 'delay'
+            });
+
+            log(`Command scheduled for execution in ${delay} seconds: "${command}"`);
+            
+            document.getElementById('commandStatus').className = 'status syncing';
+            document.getElementById('commandStatus').textContent = `Command scheduled for ${new Date(executeTime).toLocaleTimeString()}`;
+            document.getElementById('cancelBtn').disabled = false;
+
+            // Schedule the execution using executeCommand (raw, no line endings)
+            setTimeout(() => executeCommand(command), delay * 1000);
+        }
+
+        // Schedule command with BPM timing
+        function scheduleBpmCommand(command) {
+            const bpm = parseFloat(document.getElementById('bpmInput').value);
+            const division = parseInt(document.getElementById('beatDivision').value);
+            const beatCount = parseInt(document.getElementById('beatCount').value);
+            const loop = document.getElementById('bpmLoop').checked;
+            
+            currentBpmLoop = loop;
+            
+            // Calculate interval in milliseconds
+            const intervalMs = (60000 / bpm) / (division / 4);
+            
+            log(`Starting BPM scheduling: ${bpm} BPM, ${division} division, ${beatCount} beats, loop: ${loop}`);
+            log(`Interval: ${intervalMs.toFixed(1)}ms per execution`);
+            
+            document.getElementById('commandStatus').className = 'status syncing';
+            document.getElementById('commandStatus').textContent = `BPM scheduling active: ${bpm} BPM`;
+            document.getElementById('cancelBtn').disabled = false;
+            
+            let currentBeat = 0;
+            
+            const executeBpmCommand = () => {
+                if (currentBeat < beatCount || loop) {
+                    executeCommand(command);
+                    executionCounter++;
+                    document.getElementById('executionCount').textContent = executionCounter;
+                    
+                    currentBeat++;
+                    if (loop && currentBeat >= beatCount) {
+                        currentBeat = 0; // Reset for loop
+                    }
+                    
+                    // Update next execution time
+                    const nextTime = new Date(Date.now() + intervalMs);
+                    document.getElementById('nextExecution').textContent = nextTime.toLocaleTimeString();
+                    
+                    if (currentBeat < beatCount || loop) {
+                        bpmInterval = setTimeout(executeBpmCommand, intervalMs);
+                    } else {
+                        document.getElementById('commandStatus').className = 'status connected';
+                        document.getElementById('commandStatus').textContent = 'BPM sequence completed';
+                        document.getElementById('cancelBtn').disabled = true;
+                    }
+                }
+            };
+            
+            // Start immediately
+            executeBpmCommand();
+        }
+
+        // Schedule command with FPS timing
+        function scheduleFpsCommand(command) {
+            const fps = parseFloat(document.getElementById('fpsInput').value);
+            const frameInterval = parseInt(document.getElementById('frameInterval').value);
+            const totalFrames = parseInt(document.getElementById('totalFrames').value);
+            const loop = document.getElementById('fpsLoop').checked;
+            
+            currentFpsLoop = loop;
+            
+            // Calculate timing
+            const frameTimeMs = 1000 / fps;
+            const executionIntervalMs = frameTimeMs * frameInterval;
+            const totalExecutions = Math.ceil(totalFrames / frameInterval);
+            
+            log(`Starting FPS scheduling: ${fps} FPS, every ${frameInterval} frames, ${totalFrames} total frames, loop: ${loop}`);
+            log(`Interval: ${executionIntervalMs.toFixed(1)}ms per execution`);
+            
+            document.getElementById('commandStatus').className = 'status syncing';
+            document.getElementById('commandStatus').textContent = `FPS scheduling active: ${fps} FPS`;
+            document.getElementById('cancelBtn').disabled = false;
+            
+            let currentExecution = 0;
+            
+            const executeFpsCommand = () => {
+                if (currentExecution < totalExecutions || loop) {
+                    executeCommand(command);
+                    executionCounter++;
+                    document.getElementById('executionCount').textContent = executionCounter;
+                    
+                    currentExecution++;
+                    if (loop && currentExecution >= totalExecutions) {
+                        currentExecution = 0; // Reset for loop
+                    }
+                    
+                    // Update next execution time
+                    const nextTime = new Date(Date.now() + executionIntervalMs);
+                    document.getElementById('nextExecution').textContent = nextTime.toLocaleTimeString();
+                    
+                    if (currentExecution < totalExecutions || loop) {
+                        fpsInterval = setTimeout(executeFpsCommand, executionIntervalMs);
+                    } else {
+                        document.getElementById('commandStatus').className = 'status connected';
+                        document.getElementById('commandStatus').textContent = 'FPS sequence completed';
+                        document.getElementById('cancelBtn').disabled = true;
+                    }
+                }
+            };
+            
+            // Start immediately
+            executeFpsCommand();
+        }
+
+        // Execute command immediately
+        async function executeCommand(command) {
+            try {
+                const encoder = new TextEncoder();
+                const data = encoder.encode(command); // Raw command without line endings
+
+                // Send to all connected devices simultaneously
+                const promises = connectedPorts.map(async (device, index) => {
+                    try {
+                        if (!device.port.writable) {
+                            throw new Error('Port not writable');
+                        }
+                        
+                        const writer = device.port.writable.getWriter();
+                        await writer.write(data);
+                        await writer.ready;
+                        writer.releaseLock();
+                        
+                        // Display in monitor
+                        displayInMonitor(data, `TX Dev${index + 1}`);
+                    } catch (error) {
+                        log(`Failed to send to device ${index + 1}: ${error.message}`, 'error');
+                    }
+                });
+
+                await Promise.all(promises);
+                log(`Command executed (raw): "${command}"`);
+
+            } catch (error) {
+                log(`Command execution failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Toggle metronome for BPM mode
+        function toggleMetronome() {
+            const btn = document.getElementById('startMetronome');
+            
+            if (!isMetronomeRunning) {
+                startMetronome();
+                btn.textContent = '🔇 Stop Metronome';
+                btn.classList.remove('btn-success');
+                btn.classList.add('btn-danger');
+            } else {
+                stopMetronome();
+                btn.textContent = '🎵 Start Metronome';
+                btn.classList.remove('btn-danger');
+                btn.classList.add('btn-success');
+            }
+        }
+
+        // Start metronome
+        function startMetronome() {
+            const bpm = parseFloat(document.getElementById('bpmInput').value);
+            const division = parseInt(document.getElementById('beatDivision').value);
+            const intervalMs = (60000 / bpm) / (division / 4);
+            
+            isMetronomeRunning = true;
+            
+            // Create audio context for metronome clicks
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            const playClick = (isAccent = false) => {
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.frequency.value = isAccent ? 800 : 400;
+                oscillator.type = 'square';
+                
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.1);
+            };
+            
+            let beatCounter = 0;
+            const beatsPerMeasure = 4;
+            
+            const metronomeClick = () => {
+                if (isMetronomeRunning) {
+                    playClick(beatCounter % beatsPerMeasure === 0);
+                    beatCounter++;
+                    metronomeInterval = setTimeout(metronomeClick, intervalMs);
+                }
+            };
+            
+            metronomeClick();
+            log(`Metronome started at ${bpm} BPM`);
+        }
+
+        // Stop metronome
+        function stopMetronome() {
+            isMetronomeRunning = false;
+            if (metronomeInterval) {
+                clearTimeout(metronomeInterval);
+            }
+            log('Metronome stopped');
+        }
+
+        // Tap tempo functionality
+        function tapTempo() {
+            const now = Date.now();
+            const tapBtn = document.getElementById('tapTempoBtn');
+            const tapInfo = document.getElementById('tapTempoInfo');
+            
+            // Show info on first tap
+            if (tapTimes.length === 0) {
+                tapInfo.style.display = 'block';
+            }
+            
+            // Add current tap time
+            tapTimes.push(now);
+            
+            // Visual feedback - flash the button
+            tapBtn.style.transform = 'scale(0.95)';
+            tapBtn.style.backgroundColor = '#e74c3c';
+            setTimeout(() => {
+                tapBtn.style.transform = 'scale(1)';
+                tapBtn.style.backgroundColor = '';
+            }, 100);
+            
+            // Keep only recent taps (last 8 taps or taps within 10 seconds)
+            const tenSecondsAgo = now - 10000;
+            tapTimes = tapTimes.filter(time => time > tenSecondsAgo).slice(-8);
+            
+            // Need at least 2 taps to calculate BPM
+            if (tapTimes.length >= 2) {
+                // Calculate intervals between taps
+                const intervals = [];
+                for (let i = 1; i < tapTimes.length; i++) {
+                    intervals.push(tapTimes[i] - tapTimes[i - 1]);
+                }
+                
+                // Calculate average interval
+                const avgInterval = intervals.reduce((sum, interval) => sum + interval, 0) / intervals.length;
+                
+                // Convert to BPM (60000 ms per minute)
+                const bpm = Math.round((60000 / avgInterval) * 10) / 10; // Round to 1 decimal place
+                
+                // Clamp BPM to reasonable range
+                const clampedBpm = Math.max(30, Math.min(300, bpm));
+                
+                // Update BPM input
+                document.getElementById('bpmInput').value = clampedBpm;
+                
+                // Update timing display
+                updateBpmTiming();
+                
+                // Update button text to show current BPM
+                tapBtn.textContent = `🥁 ${clampedBpm} BPM`;
+                
+                log(`Tap tempo: ${clampedBpm} BPM (${tapTimes.length} taps, ${avgInterval.toFixed(1)}ms avg interval)`);
+            } else {
+                tapBtn.textContent = `🥁 Tap ${2 - tapTimes.length} more`;
+            }
+            
+            // Clear tap timeout if it exists
+            if (tapTimeoutId) {
+                clearTimeout(tapTimeoutId);
+            }
+            
+            // Reset after 5 seconds of no tapping
+            tapTimeoutId = setTimeout(() => {
+                resetTapTempo();
+            }, 5000);
+        }
+
+        // Reset tap tempo
+        function resetTapTempo() {
+            tapTimes = [];
+            const tapBtn = document.getElementById('tapTempoBtn');
+            const tapInfo = document.getElementById('tapTempoInfo');
+            
+            tapBtn.textContent = '🥁 Tap Tempo';
+            tapInfo.style.display = 'none';
+            
+            if (tapTimeoutId) {
+                clearTimeout(tapTimeoutId);
+                tapTimeoutId = null;
+            }
+        }
+
+
+        // Cancel scheduled commands
+        function cancelScheduled() {
+            scheduledCommands = [];
+            
+            // Clear all intervals
+            if (bpmInterval) {
+                clearTimeout(bpmInterval);
+                bpmInterval = null;
+            }
+            if (fpsInterval) {
+                clearTimeout(fpsInterval);
+                fpsInterval = null;
+            }
+            
+            // Stop metronome if running
+            if (isMetronomeRunning) {
+                stopMetronome();
+                const btn = document.getElementById('startMetronome');
+                btn.textContent = '🎵 Start Metronome';
+                btn.classList.remove('btn-danger');
+                btn.classList.add('btn-success');
+            }
+            
+            document.getElementById('commandStatus').className = 'status disconnected';
+            document.getElementById('commandStatus').textContent = 'Scheduled commands cancelled';
+            document.getElementById('cancelBtn').disabled = true;
+            document.getElementById('nextExecution').textContent = '--';
+            
+            log('All scheduled commands cancelled');
+        }
+
+        // Logging function
+        function log(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            
+            let prefix = '[INFO]';
+            if (type === 'error') prefix = '[ERROR]';
+            if (type === 'warning') prefix = '[WARN]';
+            
+            logEntry.innerHTML = `<span class="log-timestamp">${timestamp} ${prefix}</span>${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        // Clear log
+        function clearLog() {
+            document.getElementById('logContainer').innerHTML = '';
+            log('Log cleared');
+        }
+
+        // Enhanced Serial Monitor Functions
+        let monitorPaused = false;
+        let totalBytesReceived = 0;
+        let lastByteTime = Date.now();
+        let dataRateInterval;
+
+        function displayInMonitor(data, source) {
+            if (monitorPaused) return;
+            
+            const monitor = document.getElementById('serialMonitor');
+            const hexDisplay = document.getElementById('hexDisplay').checked;
+            const autoScroll = document.getElementById('autoScroll').checked;
+            const showTimestamps = document.getElementById('showTimestamps').checked;
+            const filterEmpty = document.getElementById('filterEmpty').checked;
+            
+            // Filter empty data if option is enabled
+            if (filterEmpty && data.length === 0) return;
+            
+            // Update byte counter and data rate
+            totalBytesReceived += data.length;
+            document.getElementById('byteCount').textContent = totalBytesReceived.toLocaleString();
+            updateDataRate(data.length);
+            
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.style.marginBottom = '1px';
+            entry.style.padding = '1px 5px';
+            entry.style.borderRadius = '2px';
+            entry.style.fontFamily = "'Consolas', 'Monaco', 'Courier New', monospace";
+            entry.style.fontSize = '12px';
+            entry.style.lineHeight = '1.2';
+            
+            let displayText;
+            if (hexDisplay) {
+                // Convert to hex with ASCII preview like screen/minicom
+                const hexArray = Array.from(data).map(byte =>
+                    byte.toString(16).padStart(2, '0').toUpperCase()
+                ).join(' ');
+                
+                // Add ASCII representation
+                const asciiArray = Array.from(data).map(byte => {
+                    if (byte >= 32 && byte <= 126) {
+                        return String.fromCharCode(byte);
+                    } else if (byte === 9) return '\\t';
+                    else if (byte === 10) return '\\n';
+                    else if (byte === 13) return '\\r';
+                    else return '.';
+                }).join('');
+                
+                displayText = showTimestamps ?
+                    `[${timestamp}] ${source}: ${hexArray} | ${asciiArray}` :
+                    `${source}: ${hexArray} | ${asciiArray}`;
+            } else {
+                // Improved text display with proper control character handling
+                const decoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true });
+                let text;
+                
+                try {
+                    text = decoder.decode(data, { stream: false });
+                } catch (e) {
+                    // Fallback for invalid UTF-8
+                    text = Array.from(data).map(byte =>
+                        byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : `\\x${byte.toString(16).padStart(2, '0')}`
+                    ).join('');
+                }
+                
+                // Handle control characters more like terminal emulators
+                const processedText = text
+                    .replace(/\r\n/g, '↵\n')  // CRLF
+                    .replace(/\r/g, '⏎')      // CR only
+                    .replace(/\n/g, '↵\n')    // LF (preserve actual newlines)
+                    .replace(/\t/g, '→')      // Tab
+                    .replace(/\x00/g, '∅')    // NULL
+                    .replace(/\x07/g, '🔔')   // Bell
+                    .replace(/\x08/g, '⌫')    // Backspace
+                    .replace(/\x1b/g, '⎋')    // Escape
+                    .replace(/[\x01-\x06\x0e-\x1f]/g, (match) => `^${String.fromCharCode(match.charCodeAt(0) + 64)}`);
+                
+                displayText = showTimestamps ?
+                    `[${timestamp}] ${source}: ${processedText}` :
+                    `${source}: ${processedText}`;
+            }
+            
+            // Handle multi-line display properly
+            const lines = displayText.split('\n');
+            lines.forEach((line, lineIndex) => {
+                if (lineIndex > 0) {
+                    const lineEntry = document.createElement('div');
+                    lineEntry.style.marginBottom = '1px';
+                    lineEntry.style.padding = '1px 5px';
+                    lineEntry.style.borderRadius = '2px';
+                    lineEntry.style.fontFamily = "'Consolas', 'Monaco', 'Courier New', monospace";
+                    lineEntry.style.fontSize = '12px';
+                    lineEntry.style.lineHeight = '1.2';
+                    lineEntry.textContent = line;
+                    
+                    // Color coding
+                    if (source.includes('TX')) {
+                        lineEntry.style.color = '#ff7b72';
+                        lineEntry.style.backgroundColor = 'rgba(255, 123, 114, 0.05)';
+                    } else {
+                        lineEntry.style.color = '#7ee787';
+                        lineEntry.style.backgroundColor = 'rgba(126, 231, 135, 0.05)';
+                    }
+                    
+                    monitor.appendChild(lineEntry);
+                } else {
+                    entry.textContent = line;
+                    
+                    // Enhanced color coding
+                    if (source.includes('TX')) {
+                        entry.style.color = '#ff7b72';
+                        entry.style.backgroundColor = 'rgba(255, 123, 114, 0.05)';
+                    } else {
+                        entry.style.color = '#7ee787';
+                        entry.style.backgroundColor = 'rgba(126, 231, 135, 0.05)';
+                    }
+                    
+                    monitor.appendChild(entry);
+                }
+            });
+            
+            // Limit monitor entries to prevent memory issues
+            const maxEntries = 2000;
+            while (monitor.children.length > maxEntries) {
+                monitor.removeChild(monitor.firstChild);
+            }
+            
+            if (autoScroll) {
+                monitor.scrollTop = monitor.scrollHeight;
+            }
+        }
+
+        function clearMonitor() {
+            document.getElementById('serialMonitor').innerHTML =
+                '<div style="color: #7d8590; font-style: italic;">🔍 Monitor cleared. Waiting for serial data...</div>';
+            totalBytesReceived = 0;
+            document.getElementById('byteCount').textContent = '0';
+            document.getElementById('dataRate').textContent = '0 B/s';
+        }
+
+        function pauseMonitor() {
+            const pauseBtn = document.getElementById('pauseBtn');
+            monitorPaused = !monitorPaused;
+            
+            if (monitorPaused) {
+                pauseBtn.textContent = '▶️ Resume';
+                pauseBtn.style.background = 'linear-gradient(135deg, #27ae60 0%, #229954 100%)';
+                log('Serial monitor paused');
+            } else {
+                pauseBtn.textContent = '⏸️ Pause';
+                pauseBtn.style.background = 'linear-gradient(135deg, #f39c12 0%, #e67e22 100%)';
+                log('Serial monitor resumed');
+            }
+        }
+
+        function saveMonitorLog() {
+            const monitor = document.getElementById('serialMonitor');
+            const logContent = Array.from(monitor.children)
+                .map(entry => entry.textContent)
+                .join('\n');
+            
+            const blob = new Blob([logContent], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `serial_log_${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            log('Serial monitor log saved');
+        }
+
+        function updateDataRate(bytesReceived) {
+            const now = Date.now();
+            const timeDiff = (now - lastByteTime) / 1000; // seconds
+            
+            if (timeDiff > 0) {
+                const rate = bytesReceived / timeDiff;
+                let rateText;
+                
+                if (rate < 1024) {
+                    rateText = `${rate.toFixed(1)} B/s`;
+                } else if (rate < 1024 * 1024) {
+                    rateText = `${(rate / 1024).toFixed(1)} KB/s`;
+                } else {
+                    rateText = `${(rate / (1024 * 1024)).toFixed(1)} MB/s`;
+                }
+                
+                document.getElementById('dataRate').textContent = rateText;
+            }
+            
+            lastByteTime = now;
+        }
+
+        function updateBaudRate() {
+            const newBaudRate = parseInt(document.getElementById('baudRateDisplay').value);
+            log(`Baud rate setting changed to ${newBaudRate} (will apply to new connections)`);
+            
+            // Store the baud rate for future connections
+            window.selectedBaudRate = newBaudRate;
+        }
+
+        // Initialize data rate monitoring
+        function startDataRateMonitoring() {
+            dataRateInterval = setInterval(() => {
+                // Reset data rate if no data received recently
+                if (Date.now() - lastByteTime > 2000) {
+                    document.getElementById('dataRate').textContent = '0 B/s';
+                }
+            }, 1000);
+        }
+
+        // Raw input handler - send characters as you type
+        document.addEventListener('DOMContentLoaded', function() {
+            const rawInput = document.getElementById('rawInput');
+            if (rawInput) {
+                rawInput.addEventListener('input', function(e) {
+                    if (connectedPorts.length > 0 && e.target.value) {
+                        const char = e.target.value.slice(-1); // Get the last character typed
+                        sendRawCharacter(char);
+                        e.target.value = ''; // Clear input for next character
+                    }
+                });
+            }
+        });
+
+        // Send raw character immediately
+        async function sendRawCharacter(char) {
+            try {
+                // Handle special characters and escape sequences
+                let actualChar = char;
+                if (char === '\\' && document.getElementById('rawInput').value.length > 1) {
+                    // Handle escape sequences like \n, \r, \t
+                    const nextChar = document.getElementById('rawInput').value[1];
+                    switch (nextChar) {
+                        case 'n': actualChar = '\n'; break;
+                        case 'r': actualChar = '\r'; break;
+                        case 't': actualChar = '\t'; break;
+                        case '\\': actualChar = '\\'; break;
+                        default: actualChar = char;
+                    }
+                }
+                
+                const encoder = new TextEncoder();
+                const data = encoder.encode(actualChar);
+                
+                displayInMonitor(data, 'TX Raw');
+                
+                const promises = connectedPorts.map(async (device, index) => {
+                    try {
+                        if (!device.port.writable) {
+                            throw new Error('Port not writable');
+                        }
+                        
+                        const writer = device.port.writable.getWriter();
+                        await writer.write(data);
+                        await writer.ready;
+                        writer.releaseLock();
+                    } catch (error) {
+                        log(`Failed to send raw to device ${index + 1}: ${error.message}`, 'error');
+                    }
+                });
+                
+                await Promise.all(promises);
+                
+                // Better logging with hex representation
+                const hexCode = actualChar.charCodeAt(0).toString(16).padStart(2, '0').toUpperCase();
+                log(`Raw character sent: "${actualChar}" (0x${hexCode}, ${actualChar.charCodeAt(0)})`);
+            } catch (error) {
+                log(`Raw send failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Send raw command without line ending
+        async function sendRaw() {
+            const command = document.getElementById('testCommand').value;
+            if (!command) return;
+            
+            try {
+                const encoder = new TextEncoder();
+                const data = encoder.encode(command);
+                
+                displayInMonitor(data, 'TX Raw');
+                
+                const promises = connectedPorts.map(async (device, index) => {
+                    try {
+                        if (!device.port.writable) {
+                            throw new Error('Port not writable');
+                        }
+                        
+                        const writer = device.port.writable.getWriter();
+                        await writer.write(data);
+                        await writer.ready;
+                        writer.releaseLock();
+                    } catch (error) {
+                        log(`Failed to send raw to device ${index + 1}: ${error.message}`, 'error');
+                    }
+                });
+                
+                await Promise.all(promises);
+                log(`Raw command sent: "${command}"`);
+            } catch (error) {
+                log(`Raw send failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Send command with CR (\r)
+        async function sendWithCR() {
+            const command = document.getElementById('testCommand').value;
+            if (!command) return;
+            
+            try {
+                const encoder = new TextEncoder();
+                const data = encoder.encode(command + '\r');
+                
+                displayInMonitor(data, 'TX +CR');
+                
+                const promises = connectedPorts.map(async (device, index) => {
+                    try {
+                        if (!device.port.writable) {
+                            throw new Error('Port not writable');
+                        }
+                        
+                        const writer = device.port.writable.getWriter();
+                        await writer.write(data);
+                        await writer.ready;
+                        writer.releaseLock();
+                    } catch (error) {
+                        log(`Failed to send CR to device ${index + 1}: ${error.message}`, 'error');
+                    }
+                });
+                
+                await Promise.all(promises);
+                log(`Command sent with CR: "${command}\\r"`);
+            } catch (error) {
+                log(`CR send failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Send command with LF (\n)
+        async function sendWithLF() {
+            const command = document.getElementById('testCommand').value;
+            if (!command) return;
+            
+            try {
+                const encoder = new TextEncoder();
+                const data = encoder.encode(command + '\n');
+                
+                displayInMonitor(data, 'TX +LF');
+                
+                const promises = connectedPorts.map(async (device, index) => {
+                    try {
+                        if (!device.port.writable) {
+                            throw new Error('Port not writable');
+                        }
+                        
+                        const writer = device.port.writable.getWriter();
+                        await writer.write(data);
+                        await writer.ready;
+                        writer.releaseLock();
+                    } catch (error) {
+                        log(`Failed to send LF to device ${index + 1}: ${error.message}`, 'error');
+                    }
+                });
+                
+                await Promise.all(promises);
+                log(`Command sent with LF: "${command}\\n"`);
+            } catch (error) {
+                log(`LF send failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Send command with CRLF (\r\n)
+        async function sendWithCRLF() {
+            const command = document.getElementById('testCommand').value;
+            if (!command) return;
+            
+            try {
+                const encoder = new TextEncoder();
+                const data = encoder.encode(command + '\r\n');
+                
+                displayInMonitor(data, 'TX +CRLF');
+                
+                const promises = connectedPorts.map(async (device, index) => {
+                    try {
+                        if (!device.port.writable) {
+                            throw new Error('Port not writable');
+                        }
+                        
+                        const writer = device.port.writable.getWriter();
+                        await writer.write(data);
+                        await writer.ready;
+                        writer.releaseLock();
+                    } catch (error) {
+                        log(`Failed to send CRLF to device ${index + 1}: ${error.message}`, 'error');
+                    }
+                });
+                
+                await Promise.all(promises);
+                log(`Command sent with CRLF: "${command}\\r\\n"`);
+            } catch (error) {
+                log(`CRLF send failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', async () => {
+            if (syncInterval) clearInterval(syncInterval);
+            if (dataRateInterval) clearInterval(dataRateInterval);
+            if (bpmInterval) clearTimeout(bpmInterval);
+            if (fpsInterval) clearTimeout(fpsInterval);
+            if (metronomeInterval) clearTimeout(metronomeInterval);
+            await disconnectSerial();
+        });
+    </script>
+</body>
+</html>
