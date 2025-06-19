@@ -457,11 +457,34 @@
                     </div>
                 </div>
                 
-                <!-- Time Delay Mode -->
+                <!-- Time Scheduling Mode -->
                 <div class="controls" id="delayModeControls">
                     <div class="control-group">
+                        <label for="scheduleMode">Schedule Type:</label>
+                        <select id="scheduleMode" onchange="updateScheduleMode()">
+                            <option value="delay">Delay (seconds from now)</option>
+                            <option value="time">Specific Time</option>
+                            <option value="next_minute">Next Minute Mark</option>
+                            <option value="next_hour">Next Hour Mark</option>
+                        </select>
+                    </div>
+                    <div class="control-group" id="delayInputGroup">
                         <label for="delayInput">Execution Delay (seconds):</label>
                         <input type="number" id="delayInput" value="5" min="1" max="3600">
+                    </div>
+                    <div class="control-group" id="timeInputGroup" style="display: none;">
+                        <label for="targetTime">Target Execution Time:</label>
+                        <input type="time" id="targetTime" step="1">
+                        <small style="color: #7f8c8d; display: block; margin-top: 5px;">
+                            Time is in your local timezone. Will be converted to NTP time for synchronization.
+                        </small>
+                    </div>
+                    <div class="control-group" id="dateInputGroup" style="display: none;">
+                        <label for="targetDate">Target Date (optional):</label>
+                        <input type="date" id="targetDate">
+                        <small style="color: #7f8c8d; display: block; margin-top: 5px;">
+                            Leave blank for today. For future dates, ensure all devices are synchronized.
+                        </small>
                     </div>
                 </div>
                 
@@ -1266,6 +1289,7 @@
             switch(mode) {
                 case 'delay':
                     document.getElementById('delayModeControls').style.display = 'grid';
+                    updateScheduleMode(); // Initialize schedule mode controls
                     break;
                 case 'bpm':
                     document.getElementById('bpmModeControls').style.display = 'grid';
@@ -1281,6 +1305,38 @@
             }
             
             log(`Scheduling mode changed to: ${mode.toUpperCase()}`);
+        }
+
+        // Update schedule mode controls (delay vs specific time)
+        function updateScheduleMode() {
+            const scheduleMode = document.getElementById('scheduleMode').value;
+            
+            // Hide all schedule input groups
+            document.getElementById('delayInputGroup').style.display = 'none';
+            document.getElementById('timeInputGroup').style.display = 'none';
+            document.getElementById('dateInputGroup').style.display = 'none';
+            
+            // Show relevant controls based on schedule mode
+            switch(scheduleMode) {
+                case 'delay':
+                    document.getElementById('delayInputGroup').style.display = 'block';
+                    break;
+                case 'time':
+                    document.getElementById('timeInputGroup').style.display = 'block';
+                    document.getElementById('dateInputGroup').style.display = 'block';
+                    // Set default time to current time + 1 minute
+                    const now = new Date(getDriftCorrectedNtpTime());
+                    now.setMinutes(now.getMinutes() + 1);
+                    now.setSeconds(0);
+                    document.getElementById('targetTime').value = now.toTimeString().slice(0, 8);
+                    break;
+                case 'next_minute':
+                case 'next_hour':
+                    // No additional inputs needed
+                    break;
+            }
+            
+            log(`Schedule mode changed to: ${scheduleMode}`);
         }
 
         // Update BPM timing display
@@ -1334,23 +1390,94 @@
             }
         }
 
-        // Schedule command with time delay using NTP-synchronized execution
+        // Schedule command using various timing modes with drift-corrected NTP synchronization
         function scheduleDelayCommand(command) {
-            const delay = parseInt(document.getElementById('delayInput').value);
+            const scheduleMode = document.getElementById('scheduleMode').value;
+            let targetNtpExecutionTime;
+            let scheduleDescription;
             
-            // Create a synchronized execution time using NTP-adjusted time
-            // Use NTP-corrected Unix timestamp for true synchronization across networks
-            const currentNtpTime = Date.now() + ntpOffset;
-            const currentNtpUnixTime = Math.floor(currentNtpTime / 1000);
-            const syncPointUnixTime = currentNtpUnixTime + Math.ceil(delay) + 1; // Add 1 second buffer for sync
-            const targetNtpExecutionTime = syncPointUnixTime * 1000; // Convert back to milliseconds
+            const currentDriftCorrectedNtpTime = getDriftCorrectedNtpTime();
             
-            // Calculate local delay accounting for NTP offset
-            // We need to execute when our local time + ntpOffset equals the target NTP time
-            const targetLocalTime = targetNtpExecutionTime - ntpOffset;
-            const localDelayMs = targetLocalTime - Date.now();
+            switch(scheduleMode) {
+                case 'delay':
+                    const delay = parseInt(document.getElementById('delayInput').value);
+                    const currentNtpUnixTime = Math.floor(currentDriftCorrectedNtpTime / 1000);
+                    const syncPointUnixTime = currentNtpUnixTime + Math.ceil(delay) + 1; // Add 1 second buffer for sync
+                    targetNtpExecutionTime = syncPointUnixTime * 1000;
+                    scheduleDescription = `${delay} seconds from now`;
+                    break;
+                    
+                case 'time':
+                    const targetTimeStr = document.getElementById('targetTime').value;
+                    const targetDateStr = document.getElementById('targetDate').value;
+                    
+                    if (!targetTimeStr) {
+                        alert('Please select a target time');
+                        return;
+                    }
+                    
+                    // Parse the target time
+                    const [hours, minutes, seconds = 0] = targetTimeStr.split(':').map(Number);
+                    
+                    // Create target date (today if no date specified)
+                    let targetDate;
+                    if (targetDateStr) {
+                        targetDate = new Date(targetDateStr);
+                    } else {
+                        targetDate = new Date(currentDriftCorrectedNtpTime);
+                    }
+                    
+                    // Set the target time
+                    targetDate.setHours(hours, minutes, seconds, 0);
+                    
+                    // If the time has already passed today and no date was specified, schedule for tomorrow
+                    if (!targetDateStr && targetDate.getTime() <= currentDriftCorrectedNtpTime) {
+                        targetDate.setDate(targetDate.getDate() + 1);
+                        log('Target time has passed today, scheduling for tomorrow');
+                    }
+                    
+                    targetNtpExecutionTime = targetDate.getTime();
+                    scheduleDescription = `${targetDate.toLocaleString()}`;
+                    break;
+                    
+                case 'next_minute':
+                    const nextMinute = new Date(currentDriftCorrectedNtpTime);
+                    nextMinute.setMinutes(nextMinute.getMinutes() + 1);
+                    nextMinute.setSeconds(0, 0); // Set to exactly the minute mark
+                    targetNtpExecutionTime = nextMinute.getTime();
+                    scheduleDescription = `next minute mark (${nextMinute.toLocaleTimeString()})`;
+                    break;
+                    
+                case 'next_hour':
+                    const nextHour = new Date(currentDriftCorrectedNtpTime);
+                    nextHour.setHours(nextHour.getHours() + 1);
+                    nextHour.setMinutes(0, 0, 0); // Set to exactly the hour mark
+                    targetNtpExecutionTime = nextHour.getTime();
+                    scheduleDescription = `next hour mark (${nextHour.toLocaleTimeString()})`;
+                    break;
+                    
+                default:
+                    alert('Invalid schedule mode');
+                    return;
+            }
+            
+            // Validate that the target time is in the future
+            if (targetNtpExecutionTime <= currentDriftCorrectedNtpTime) {
+                alert('Target execution time must be in the future');
+                return;
+            }
+            
+            // Calculate local delay accounting for drift-corrected NTP offset
+            const currentTime = Date.now();
+            const timeSinceLastSync = lastSyncTime > 0 ? (currentTime - lastSyncTime) / 1000 : 0;
+            const estimatedDrift = driftRate * timeSinceLastSync;
+            const currentCorrectedOffset = ntpOffset + estimatedDrift;
+            
+            const targetLocalTime = targetNtpExecutionTime - currentCorrectedOffset;
+            const localDelayMs = targetLocalTime - currentTime;
             
             const commandId = Date.now();
+            const syncPointUnixTime = Math.floor(targetNtpExecutionTime / 1000);
 
             scheduledCommands.push({
                 id: commandId,
@@ -1358,15 +1485,19 @@
                 executeTime: targetNtpExecutionTime,
                 syncPointUnixTime: syncPointUnixTime,
                 devices: connectedPorts.length,
-                mode: 'delay'
+                mode: 'time_scheduled',
+                scheduleMode: scheduleMode,
+                scheduleDescription: scheduleDescription
             });
 
-            log(`Command scheduled for synchronized execution at NTP Unix time: ${syncPointUnixTime} (${new Date(targetNtpExecutionTime).toLocaleString()})`);
-            log(`NTP target time: ${new Date(targetNtpExecutionTime).toLocaleTimeString()}, Local target: ${new Date(targetLocalTime).toLocaleTimeString()}`);
-            log(`NTP offset: ${ntpOffset}ms, Local delay to sync point: ${localDelayMs}ms`);
+            log(`Command scheduled for ${scheduleDescription}`);
+            log(`Target NTP time: ${new Date(targetNtpExecutionTime).toLocaleString()}`);
+            log(`Local target time: ${new Date(targetLocalTime).toLocaleTimeString()}`);
+            log(`Base NTP offset: ${ntpOffset}ms, Drift correction: ${estimatedDrift.toFixed(2)}ms, Total offset: ${currentCorrectedOffset.toFixed(2)}ms`);
+            log(`Local delay to execution: ${(localDelayMs/1000).toFixed(1)} seconds`);
             
             document.getElementById('commandStatus').className = 'status syncing';
-            document.getElementById('commandStatus').textContent = `Command scheduled for NTP-synchronized execution at ${new Date(targetNtpExecutionTime).toLocaleTimeString()}`;
+            document.getElementById('commandStatus').textContent = `Command scheduled for ${new Date(targetNtpExecutionTime).toLocaleTimeString()}`;
             document.getElementById('cancelBtn').disabled = false;
 
             // Publish sync command via MQTT for multi-device coordination
@@ -1376,7 +1507,11 @@
                     command: command,
                     syncPointUnixTime: syncPointUnixTime,
                     targetExecutionTime: targetNtpExecutionTime,
-                    ntpOffset: ntpOffset, // Include our NTP offset for reference
+                    scheduleMode: scheduleMode,
+                    scheduleDescription: scheduleDescription,
+                    ntpOffset: ntpOffset,
+                    driftRate: driftRate,
+                    lastSyncTime: lastSyncTime,
                     source: document.getElementById('mqttClientId').value
                 };
                 
@@ -1387,14 +1522,18 @@
                 });
             }
 
-            // Execute at the exact sync point, accounting for NTP offset
+            // Execute at the exact scheduled time, accounting for drift-corrected NTP offset
             setTimeout(() => {
                 const actualExecutionTime = Date.now();
-                const actualNtpTime = actualExecutionTime + ntpOffset;
-                const syncAccuracy = Math.abs(actualNtpTime - targetNtpExecutionTime);
-                log(`Executing synchronized command (NTP accuracy: ±${syncAccuracy}ms from target)`);
-                log(`Target NTP time: ${new Date(targetNtpExecutionTime).toLocaleTimeString()}, Actual NTP time: ${new Date(actualNtpTime).toLocaleTimeString()}`);
+                const actualDriftCorrectedNtpTime = getDriftCorrectedNtpTime();
+                const syncAccuracy = Math.abs(actualDriftCorrectedNtpTime - targetNtpExecutionTime);
+                log(`Executing scheduled command (NTP accuracy: ±${syncAccuracy}ms from target)`);
+                log(`Target: ${new Date(targetNtpExecutionTime).toLocaleTimeString()}, Actual: ${new Date(actualDriftCorrectedNtpTime).toLocaleTimeString()}`);
                 executeCommand(command);
+                
+                document.getElementById('commandStatus').className = 'status connected';
+                document.getElementById('commandStatus').textContent = `Command executed at ${new Date(actualDriftCorrectedNtpTime).toLocaleTimeString()}`;
+                document.getElementById('cancelBtn').disabled = true;
             }, Math.max(0, localDelayMs));
         }
 
