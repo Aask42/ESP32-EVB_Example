@@ -668,6 +668,7 @@
         let tapTimes = [];
         let tapTimeoutId = null;
         let connectionHealthInterval;
+        let ntpTimeDisplayInterval;
         
         // MQTT variables
         let mqttClient = null;
@@ -1124,7 +1125,7 @@
         // Start NTP time display update
         function startNtpTimeDisplay() {
             // Update current NTP time display every second
-            setInterval(() => {
+            ntpTimeDisplayInterval = setInterval(() => {
                 const ntpTime = new Date(Date.now() + ntpOffset);
                 document.getElementById('currentNtpTime').textContent = ntpTime.toLocaleTimeString();
             }, 1000);
@@ -1220,29 +1221,39 @@
         // Schedule command with time delay
         function scheduleDelayCommand(command) {
             const delay = parseInt(document.getElementById('delayInput').value);
-            // Apply NTP offset to get accurate execution time
+            
+            // Calculate target NTP time for execution (absolute time reference)
             const currentNtpTime = Date.now() + ntpOffset;
-            const executeTime = currentNtpTime + (delay * 1000);
+            const targetNtpTime = currentNtpTime + (delay * 1000);
+            
+            // Calculate when to execute based on local time to hit the target NTP time
+            const executeAtLocalTime = targetNtpTime - ntpOffset;
+            const localDelayMs = executeAtLocalTime - Date.now();
+            
             const commandId = Date.now();
 
             scheduledCommands.push({
                 id: commandId,
                 command: command,
-                executeTime: executeTime,
+                executeTime: targetNtpTime,
+                localExecuteTime: executeAtLocalTime,
                 devices: connectedPorts.length,
                 mode: 'delay'
             });
 
-            log(`Command scheduled for execution in ${delay} seconds (NTP-adjusted): "${command}"`);
-            log(`NTP offset applied: ${ntpOffset}ms`);
+            log(`Command scheduled for NTP time: ${new Date(targetNtpTime).toLocaleTimeString()}`);
+            log(`Local execution time: ${new Date(executeAtLocalTime).toLocaleTimeString()}`);
+            log(`NTP offset: ${ntpOffset}ms, Local delay: ${localDelayMs}ms`);
             
             document.getElementById('commandStatus').className = 'status syncing';
-            document.getElementById('commandStatus').textContent = `Command scheduled for ${new Date(executeTime).toLocaleTimeString()} (NTP-adjusted)`;
+            document.getElementById('commandStatus').textContent = `Command scheduled for ${new Date(targetNtpTime).toLocaleTimeString()} NTP time`;
             document.getElementById('cancelBtn').disabled = false;
 
-            // Calculate actual delay accounting for NTP offset
-            const actualDelay = executeTime - Date.now();
-            setTimeout(() => executeCommand(command), Math.max(0, actualDelay));
+            // Use the calculated local delay to hit the target NTP time
+            setTimeout(() => {
+                log(`Executing command at NTP time: ${new Date(Date.now() + ntpOffset).toLocaleTimeString()}`);
+                executeCommand(command);
+            }, Math.max(0, localDelayMs));
         }
 
         // Schedule command with BPM timing
@@ -1258,16 +1269,22 @@
             const intervalMs = (60000 / bpm) / (division / 4);
             
             log(`Starting BPM scheduling: ${bpm} BPM, ${division} division, ${beatCount} beats, loop: ${loop}`);
-            log(`Interval: ${intervalMs.toFixed(1)}ms per execution`);
+            log(`Interval: ${intervalMs.toFixed(1)}ms per execution (NTP-synchronized)`);
+            log(`Current NTP offset: ${ntpOffset}ms`);
             
             document.getElementById('commandStatus').className = 'status syncing';
-            document.getElementById('commandStatus').textContent = `BPM scheduling active: ${bpm} BPM`;
+            document.getElementById('commandStatus').textContent = `BPM scheduling active: ${bpm} BPM (NTP-sync)`;
             document.getElementById('cancelBtn').disabled = false;
             
             let currentBeat = 0;
+            let nextTargetNtpTime = Date.now() + ntpOffset; // Start from current NTP time
             
             const executeBpmCommand = () => {
                 if (currentBeat < beatCount || loop) {
+                    // Log the actual NTP time of execution
+                    const actualNtpTime = Date.now() + ntpOffset;
+                    log(`BPM beat ${currentBeat + 1} executed at NTP time: ${new Date(actualNtpTime).toLocaleTimeString()}`);
+                    
                     executeCommand(command);
                     executionCounter++;
                     document.getElementById('executionCount').textContent = executionCounter;
@@ -1277,13 +1294,23 @@
                         currentBeat = 0; // Reset for loop
                     }
                     
-                    // Update next execution time with NTP offset
-                    const nextNtpTime = Date.now() + ntpOffset + intervalMs;
-                    const nextTime = new Date(nextNtpTime);
-                    document.getElementById('nextExecution').textContent = nextTime.toLocaleTimeString() + ' (NTP)';
-                    
                     if (currentBeat < beatCount || loop) {
-                        bpmInterval = setTimeout(executeBpmCommand, intervalMs);
+                        // Calculate next target NTP time
+                        nextTargetNtpTime += intervalMs;
+                        
+                        // Calculate local delay needed to hit target NTP time
+                        const currentLocalTime = Date.now();
+                        const targetLocalTime = nextTargetNtpTime - ntpOffset;
+                        const localDelay = targetLocalTime - currentLocalTime;
+                        
+                        // Update display with target NTP time
+                        document.getElementById('nextExecution').textContent =
+                            new Date(nextTargetNtpTime).toLocaleTimeString() + ' (NTP target)';
+                        
+                        // Schedule next execution to hit exact NTP time
+                        bpmInterval = setTimeout(executeBpmCommand, Math.max(0, localDelay));
+                        
+                        log(`Next BPM beat scheduled for NTP time: ${new Date(nextTargetNtpTime).toLocaleTimeString()}, local delay: ${localDelay.toFixed(1)}ms`);
                     } else {
                         document.getElementById('commandStatus').className = 'status connected';
                         document.getElementById('commandStatus').textContent = 'BPM sequence completed';
@@ -1311,16 +1338,22 @@
             const totalExecutions = Math.ceil(totalFrames / frameInterval);
             
             log(`Starting FPS scheduling: ${fps} FPS, every ${frameInterval} frames, ${totalFrames} total frames, loop: ${loop}`);
-            log(`Interval: ${executionIntervalMs.toFixed(1)}ms per execution`);
+            log(`Interval: ${executionIntervalMs.toFixed(1)}ms per execution (NTP-synchronized)`);
+            log(`Current NTP offset: ${ntpOffset}ms`);
             
             document.getElementById('commandStatus').className = 'status syncing';
-            document.getElementById('commandStatus').textContent = `FPS scheduling active: ${fps} FPS`;
+            document.getElementById('commandStatus').textContent = `FPS scheduling active: ${fps} FPS (NTP-sync)`;
             document.getElementById('cancelBtn').disabled = false;
             
             let currentExecution = 0;
+            let nextTargetNtpTime = Date.now() + ntpOffset; // Start from current NTP time
             
             const executeFpsCommand = () => {
                 if (currentExecution < totalExecutions || loop) {
+                    // Log the actual NTP time of execution
+                    const actualNtpTime = Date.now() + ntpOffset;
+                    log(`FPS frame ${currentExecution + 1} executed at NTP time: ${new Date(actualNtpTime).toLocaleTimeString()}`);
+                    
                     executeCommand(command);
                     executionCounter++;
                     document.getElementById('executionCount').textContent = executionCounter;
@@ -1330,13 +1363,23 @@
                         currentExecution = 0; // Reset for loop
                     }
                     
-                    // Update next execution time with NTP offset
-                    const nextNtpTime = Date.now() + ntpOffset + executionIntervalMs;
-                    const nextTime = new Date(nextNtpTime);
-                    document.getElementById('nextExecution').textContent = nextTime.toLocaleTimeString() + ' (NTP)';
-                    
                     if (currentExecution < totalExecutions || loop) {
-                        fpsInterval = setTimeout(executeFpsCommand, executionIntervalMs);
+                        // Calculate next target NTP time
+                        nextTargetNtpTime += executionIntervalMs;
+                        
+                        // Calculate local delay needed to hit target NTP time
+                        const currentLocalTime = Date.now();
+                        const targetLocalTime = nextTargetNtpTime - ntpOffset;
+                        const localDelay = targetLocalTime - currentLocalTime;
+                        
+                        // Update display with target NTP time
+                        document.getElementById('nextExecution').textContent =
+                            new Date(nextTargetNtpTime).toLocaleTimeString() + ' (NTP target)';
+                        
+                        // Schedule next execution to hit exact NTP time
+                        fpsInterval = setTimeout(executeFpsCommand, Math.max(0, localDelay));
+                        
+                        log(`Next FPS frame scheduled for NTP time: ${new Date(nextTargetNtpTime).toLocaleTimeString()}, local delay: ${localDelay.toFixed(1)}ms`);
                     } else {
                         document.getElementById('commandStatus').className = 'status connected';
                         document.getElementById('commandStatus').textContent = 'FPS sequence completed';
@@ -2542,9 +2585,8 @@
             entry.style.fontSize = '13px';
             entry.style.lineHeight = '1.3';
 
-            // Apply NTP offset to MQTT message timestamps for consistency
-            const ntpAdjustedTimestamp = new Date(timestamp.getTime() + ntpOffset);
-            const timeStr = ntpAdjustedTimestamp.toLocaleTimeString();
+            // Use the already NTP-adjusted timestamp passed from the caller
+            const timeStr = timestamp.toLocaleTimeString();
             
             if (type === 'RECEIVED') {
                 entry.style.color = '#7ee787';
@@ -2614,6 +2656,7 @@
             if (syncInterval) clearInterval(syncInterval);
             if (dataRateInterval) clearInterval(dataRateInterval);
             if (connectionHealthInterval) clearInterval(connectionHealthInterval);
+            if (ntpTimeDisplayInterval) clearInterval(ntpTimeDisplayInterval);
             if (bpmInterval) clearTimeout(bpmInterval);
             if (fpsInterval) clearTimeout(fpsInterval);
             if (metronomeInterval) clearTimeout(metronomeInterval);
