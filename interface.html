@@ -1062,21 +1062,35 @@
             }
         }
 
-        // NTP Time Synchronization
+        // Enhanced NTP Time Synchronization with drift correction
+        let ntpSyncHistory = [];
+        let driftRate = 0; // milliseconds per second
+        let lastSyncTime = 0;
+        let syncFailureCount = 0;
+        let adaptiveSyncInterval = 60000; // Start with 1 minute, will adapt based on drift
+
         async function syncTime() {
             try {
                 log('Syncing with NTP server...');
                 document.getElementById('syncBtn').disabled = true;
                 
-                // Simple NTP sync using multiple time servers
+                const syncStartTime = Date.now();
+                
+                // Enhanced NTP sync using multiple time servers with redundancy
                 const timeServers = [
-                    'https://worldtimeapi.org/api/timezone/Etc/UTC'
+                    'https://worldtimeapi.org/api/timezone/Etc/UTC',
                 ];
 
                 let serverTime = null;
+                let networkLatency = 0;
+                
                 for (const server of timeServers) {
                     try {
+                        const requestStart = Date.now();
                         const response = await fetch(server);
+                        const requestEnd = Date.now();
+                        networkLatency = (requestEnd - requestStart) / 2; // Estimate one-way latency
+                        
                         const data = await response.json();
                         
                         if (data.datetime) {
@@ -1085,48 +1099,151 @@
                             serverTime = new Date(data.dateTime);
                         }
                         
-                        if (serverTime) break;
+                        if (serverTime) {
+                            // Compensate for network latency
+                            serverTime = new Date(serverTime.getTime() + networkLatency);
+                            break;
+                        }
                     } catch (e) {
+                        log(`Failed to sync with ${server}: ${e.message}`, 'warning');
                         continue;
                     }
                 }
 
                 if (serverTime) {
                     const localTime = new Date();
+                    const previousOffset = ntpOffset;
                     ntpOffset = serverTime.getTime() - localTime.getTime();
                     
-                    document.getElementById('ntpOffset').textContent = ntpOffset;
+                    // Calculate drift rate if we have previous sync data
+                    if (lastSyncTime > 0 && ntpSyncHistory.length > 0) {
+                        const timeSinceLastSync = (syncStartTime - lastSyncTime) / 1000; // seconds
+                        const offsetChange = ntpOffset - previousOffset;
+                        const currentDriftRate = offsetChange / timeSinceLastSync; // ms per second
+                        
+                        // Use exponential moving average to smooth drift rate calculation
+                        driftRate = (driftRate * 0.7) + (currentDriftRate * 0.3);
+                        
+                        log(`Drift rate: ${(driftRate * 1000).toFixed(3)}ms/s, Offset change: ${offsetChange}ms over ${timeSinceLastSync.toFixed(1)}s`);
+                    }
+                    
+                    // Store sync history for drift analysis
+                    ntpSyncHistory.push({
+                        timestamp: syncStartTime,
+                        offset: ntpOffset,
+                        driftRate: driftRate,
+                        networkLatency: networkLatency
+                    });
+                    
+                    // Keep only last 10 sync records
+                    if (ntpSyncHistory.length > 10) {
+                        ntpSyncHistory.shift();
+                    }
+                    
+                    lastSyncTime = syncStartTime;
+                    syncFailureCount = 0; // Reset failure count on success
+                    
+                    // Adapt sync interval based on drift rate
+                    adaptSyncInterval();
+                    
+                    document.getElementById('ntpOffset').textContent = `${ntpOffset} (±${networkLatency.toFixed(1)}ms)`;
                     // Use NTP-adjusted time for last sync display
                     const ntpAdjustedTime = new Date(Date.now() + ntpOffset);
                     document.getElementById('lastSync').textContent = ntpAdjustedTime.toLocaleTimeString();
                     
-                    log(`Time synchronized. Offset: ${ntpOffset}ms`);
+                    log(`Time synchronized. Offset: ${ntpOffset}ms, Network latency: ${networkLatency.toFixed(1)}ms`);
                     log(`Local time: ${localTime.toLocaleTimeString()}, NTP time: ${serverTime.toLocaleTimeString()}`);
+                    log(`Drift rate: ${(driftRate * 1000).toFixed(3)}ms/s, Next sync in: ${(adaptiveSyncInterval/1000).toFixed(0)}s`);
                 } else {
-                    throw new Error('Could not reach time servers');
+                    throw new Error('Could not reach any time servers');
                 }
             } catch (error) {
-                log(`NTP sync failed: ${error.message}`, 'error');
-                // Fallback to local time
-                ntpOffset = 0;
-                document.getElementById('ntpOffset').textContent = '0 (Local)';
+                syncFailureCount++;
+                log(`NTP sync failed (attempt ${syncFailureCount}): ${error.message}`, 'error');
+                
+                // If we have drift rate data, apply drift correction
+                if (lastSyncTime > 0 && Math.abs(driftRate) > 0.001) {
+                    const timeSinceLastSync = (Date.now() - lastSyncTime) / 1000;
+                    const estimatedDrift = driftRate * timeSinceLastSync;
+                    ntpOffset += estimatedDrift;
+                    log(`Applied drift correction: ${estimatedDrift.toFixed(2)}ms (rate: ${(driftRate * 1000).toFixed(3)}ms/s)`, 'warning');
+                    document.getElementById('ntpOffset').textContent = `${ntpOffset.toFixed(0)} (drift-corrected)`;
+                }
+                
+                // Increase sync frequency on failures
+                if (syncFailureCount >= 3) {
+                    adaptiveSyncInterval = Math.max(30000, adaptiveSyncInterval / 2); // Min 30 seconds
+                    log(`Increased sync frequency due to failures: ${(adaptiveSyncInterval/1000).toFixed(0)}s`, 'warning');
+                }
+                
+                // Fallback to local time only after multiple failures
+                if (syncFailureCount >= 5) {
+                    ntpOffset = 0;
+                    document.getElementById('ntpOffset').textContent = '0 (Local - NTP failed)';
+                    log('Falling back to local time after multiple NTP failures', 'error');
+                }
             } finally {
                 document.getElementById('syncBtn').disabled = false;
             }
         }
 
-        // Start automatic NTP sync
-        function startNTPSync() {
-            syncTime(); // Initial sync
-            syncInterval = setInterval(syncTime, 300000); // Sync every 5 minutes
+        // Adapt sync interval based on clock drift characteristics
+        function adaptSyncInterval() {
+            const absDriftRate = Math.abs(driftRate);
+            
+            if (absDriftRate < 0.001) {
+                // Very stable clock - sync less frequently
+                adaptiveSyncInterval = 300000; // 5 minutes
+            } else if (absDriftRate < 0.01) {
+                // Moderate drift - normal sync frequency
+                adaptiveSyncInterval = 120000; // 2 minutes
+            } else if (absDriftRate < 0.1) {
+                // High drift - sync more frequently
+                adaptiveSyncInterval = 60000; // 1 minute
+            } else {
+                // Very high drift - sync very frequently
+                adaptiveSyncInterval = 30000; // 30 seconds
+            }
+            
+            log(`Adaptive sync interval set to ${(adaptiveSyncInterval/1000).toFixed(0)}s based on drift rate ${(driftRate * 1000).toFixed(3)}ms/s`);
         }
 
-        // Start NTP time display update
+        // Start automatic NTP sync with adaptive intervals
+        function startNTPSync() {
+            syncTime(); // Initial sync
+            
+            // Use adaptive interval that adjusts based on clock stability
+            const scheduleNextSync = () => {
+                if (syncInterval) {
+                    clearTimeout(syncInterval);
+                }
+                syncInterval = setTimeout(() => {
+                    syncTime().then(() => {
+                        scheduleNextSync(); // Schedule next sync with potentially updated interval
+                    });
+                }, adaptiveSyncInterval);
+            };
+            
+            scheduleNextSync();
+        }
+
+        // Get drift-corrected NTP time
+        function getDriftCorrectedNtpTime() {
+            if (lastSyncTime === 0) {
+                return Date.now() + ntpOffset;
+            }
+            
+            const timeSinceLastSync = (Date.now() - lastSyncTime) / 1000;
+            const estimatedDrift = driftRate * timeSinceLastSync;
+            return Date.now() + ntpOffset + estimatedDrift;
+        }
+
+        // Start NTP time display update with drift correction
         function startNtpTimeDisplay() {
-            // Update current NTP time display every second
+            // Update current NTP time display every second using drift correction
             ntpTimeDisplayInterval = setInterval(() => {
-                const ntpTime = new Date(Date.now() + ntpOffset);
-                document.getElementById('currentNtpTime').textContent = ntpTime.toLocaleTimeString();
+                const driftCorrectedNtpTime = new Date(getDriftCorrectedNtpTime());
+                document.getElementById('currentNtpTime').textContent = driftCorrectedNtpTime.toLocaleTimeString();
             }, 1000);
         }
 
