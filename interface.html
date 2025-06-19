@@ -274,8 +274,8 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔗 Serial Sync Control with Streaming Clock</h1>
-            <p>Synchronized command execution across multiple serial devices with WebSocket streaming clock and MQTT messaging</p>
+            <h1>🔗 Serial Sync Control with Time Sync</h1>
+            <p>Synchronized command execution across multiple serial devices with HTTP time synchronization and MQTT messaging</p>
         </div>
 
         <div class="main-content">
@@ -417,11 +417,11 @@
 
             <!-- Synchronization Status -->
             <div class="section">
-                <h2>⏰ Streaming Clock Synchronization Status</h2>
+                <h2>⏰ Time Synchronization Status</h2>
                 <div class="sync-info">
                     <div class="sync-stat">
                         <div id="ntpOffset" class="sync-stat-value">--</div>
-                        <div class="sync-stat-label">Clock Offset (ms)</div>
+                        <div class="sync-stat-label">Time Offset (ms)</div>
                     </div>
                     <div class="sync-stat">
                         <div id="connectedCount" class="sync-stat-value">0</div>
@@ -429,14 +429,14 @@
                     </div>
                     <div class="sync-stat">
                         <div id="lastSync" class="sync-stat-value">--</div>
-                        <div class="sync-stat-label">Last Sync (Stream)</div>
+                        <div class="sync-stat-label">Last Sync (HTTP)</div>
                     </div>
                     <div class="sync-stat">
                         <div id="currentNtpTime" class="sync-stat-value">--</div>
-                        <div class="sync-stat-label">Current Stream Time</div>
+                        <div class="sync-stat-label">Current Sync Time</div>
                     </div>
                 </div>
-                <button id="syncBtn" onclick="syncTime()" class="btn-success">🔄 Sync Time via Stream</button>
+                <button id="syncBtn" onclick="syncTime()" class="btn-success">🔄 Sync Time via HTTP</button>
             </div>
 
             <!-- Command Control -->
@@ -476,7 +476,7 @@
                         <label for="targetTime">Target Execution Time:</label>
                         <input type="time" id="targetTime" step="1">
                         <small style="color: #7f8c8d; display: block; margin-top: 5px;">
-                            Time is in your local timezone. Will be converted to streaming clock time for synchronization.
+                            Time is in your local timezone. Will be converted to synchronized time for execution.
                         </small>
                     </div>
                     <div class="control-group" id="dateInputGroup" style="display: none;">
@@ -1096,19 +1096,36 @@
         let reconnectDelay = 1000; // Start with 1 second
         let clockConnected = false;
 
-        // Free WebSocket time services (fallback to HTTP if WebSocket unavailable)
+        // HTTP-only time services to avoid WebSocket conflicts with MQTT
         const clockServices = [
             {
-                name: 'TimeAPI.io WebSocket',
-                url: 'wss://timeapi.io/ws/utc',
-                type: 'websocket',
-                parseMessage: (data) => {
-                    try {
-                        const parsed = JSON.parse(data);
-                        return parsed.dateTime ? new Date(parsed.dateTime) : null;
-                    } catch (e) {
-                        return null;
-                    }
+                name: 'WorldTimeAPI',
+                url: 'https://worldtimeapi.org/api/timezone/Etc/UTC',
+                type: 'http',
+                parseMessage: async (url) => {
+                    const response = await fetch(url);
+                    const data = await response.json();
+                    return data.datetime ? new Date(data.datetime) : null;
+                }
+            },
+            {
+                name: 'TimeAPI.io',
+                url: 'https://timeapi.io/api/Time/current/zone?timeZone=UTC',
+                type: 'http',
+                parseMessage: async (url) => {
+                    const response = await fetch(url);
+                    const data = await response.json();
+                    return data.dateTime ? new Date(data.dateTime) : null;
+                }
+            },
+            {
+                name: 'JSON Time API',
+                url: 'http://worldtimeapi.org/api/timezone/UTC',
+                type: 'http',
+                parseMessage: async (url) => {
+                    const response = await fetch(url);
+                    const data = await response.json();
+                    return data.datetime ? new Date(data.datetime) : null;
                 }
             }
         ];
@@ -1116,140 +1133,12 @@
         let currentServiceIndex = 0;
 
         async function connectStreamingClock() {
-            if (clockWebSocket && clockWebSocket.readyState === WebSocket.OPEN) {
-                return; // Already connected
-            }
-
-            // Close existing connection if it exists
-            if (clockWebSocket) {
-                try {
-                    clockWebSocket.close();
-                } catch (e) {
-                    // Ignore close errors
-                }
-                clockWebSocket = null;
-            }
-
+            // Use HTTP-only time synchronization to avoid WebSocket conflicts with MQTT
             const service = clockServices[currentServiceIndex];
-            log(`Attempting to connect to streaming clock: ${service.name}`);
-
-            if (service.type === 'websocket') {
-                try {
-                    // Add connection timeout to prevent hanging
-                    const connectionTimeout = setTimeout(() => {
-                        if (clockWebSocket && clockWebSocket.readyState === WebSocket.CONNECTING) {
-                            log('Streaming clock connection timeout, closing...', 'warning');
-                            clockWebSocket.close();
-                        }
-                    }, 10000);
-
-                    clockWebSocket = new WebSocket(service.url);
-                    
-                    clockWebSocket.onopen = () => {
-                        clearTimeout(connectionTimeout);
-                        clockConnected = true;
-                        reconnectAttempts = 0;
-                        reconnectDelay = 2000;
-                        syncFailureCount = 0;
-                        log(`Connected to streaming clock: ${service.name}`);
-                        updateClockConnectionStatus();
-                        
-                        // Request initial time sync
-                        try {
-                            if (service.url.includes('worldtimeapi')) {
-                                clockWebSocket.send(JSON.stringify({ action: 'get_time', timezone: 'UTC' }));
-                            } else {
-                                clockWebSocket.send(JSON.stringify({ action: 'get_time' }));
-                            }
-                        } catch (e) {
-                            log('Error sending initial time request: ' + e.message, 'warning');
-                        }
-                    };
-
-                    clockWebSocket.onmessage = (event) => {
-                        handleStreamingClockMessage(event.data, service);
-                    };
-
-                    clockWebSocket.onclose = (event) => {
-                        clearTimeout(connectionTimeout);
-                        clockConnected = false;
-                        updateClockConnectionStatus();
-                        log(`Streaming clock connection closed: ${event.reason || 'Unknown reason'}`, 'warning');
-                        
-                        // Only schedule reconnect if it wasn't a manual close
-                        if (event.code !== 1000) {
-                            setTimeout(() => scheduleReconnect(), 5000); // Delay before reconnect
-                        }
-                    };
-
-                    clockWebSocket.onerror = (error) => {
-                        clearTimeout(connectionTimeout);
-                        log(`Streaming clock WebSocket error: ${error.message || 'Connection failed'}`, 'error');
-                        clockConnected = false;
-                        updateClockConnectionStatus();
-                        
-                        // Delay error-based reconnects to avoid rapid retries
-                        setTimeout(() => scheduleReconnect(), 10000);
-                    };
-
-                } catch (error) {
-                    log(`Failed to create WebSocket connection: ${error.message}`, 'error');
-                    scheduleReconnect();
-                }
-            } else {
-                // HTTP fallback
-                await syncTimeHTTP(service);
-            }
+            log(`Syncing time with HTTP service: ${service.name}`);
+            await syncTimeHTTP(service);
         }
 
-        function handleStreamingClockMessage(data, service) {
-            try {
-                const serverTime = service.parseMessage(data);
-                if (serverTime) {
-                    const syncStartTime = Date.now();
-                    const localTime = new Date();
-                    const previousOffset = ntpOffset;
-                    ntpOffset = serverTime.getTime() - localTime.getTime();
-                    
-                    // Calculate drift rate if we have previous sync data
-                    if (lastSyncTime > 0 && clockSyncHistory.length > 0) {
-                        const timeSinceLastSync = (syncStartTime - lastSyncTime) / 1000; // seconds
-                        const offsetChange = ntpOffset - previousOffset;
-                        const currentDriftRate = offsetChange / timeSinceLastSync; // ms per second
-                        
-                        // Use exponential moving average to smooth drift rate calculation
-                        driftRate = (driftRate * 0.7) + (currentDriftRate * 0.3);
-                        
-                        log(`Drift rate: ${(driftRate * 1000).toFixed(3)}ms/s, Offset change: ${offsetChange}ms over ${timeSinceLastSync.toFixed(1)}s`);
-                    }
-                    
-                    // Store sync history for drift analysis
-                    clockSyncHistory.push({
-                        timestamp: syncStartTime,
-                        offset: ntpOffset,
-                        driftRate: driftRate,
-                        service: service.name
-                    });
-                    
-                    // Keep only last 10 sync records
-                    if (clockSyncHistory.length > 10) {
-                        clockSyncHistory.shift();
-                    }
-                    
-                    lastSyncTime = syncStartTime;
-                    syncFailureCount = 0;
-                    
-                    document.getElementById('ntpOffset').textContent = `${ntpOffset.toFixed(0)}ms (WS)`;
-                    const clockAdjustedTime = new Date(Date.now() + ntpOffset);
-                    document.getElementById('lastSync').textContent = clockAdjustedTime.toLocaleTimeString();
-                    
-                    log(`Streaming clock synchronized. Offset: ${ntpOffset.toFixed(0)}ms via ${service.name}`);
-                    log(`Local time: ${localTime.toLocaleTimeString()}, Clock time: ${serverTime.toLocaleTimeString()}`);
-                }
-            } catch (error) {
-                log(`Error processing streaming clock message: ${error.message}`, 'error');
-            }
-        }
 
         async function syncTimeHTTP(service) {
             try {
@@ -1310,41 +1199,27 @@
         }
 
         function scheduleReconnect() {
-            // Don't reconnect if MQTT is connecting or unstable to avoid conflicts
-            if (mqttClient && (mqttClient.reconnecting || !mqttConnected)) {
-                log('Delaying streaming clock reconnect - MQTT connection in progress', 'warning');
-                setTimeout(() => scheduleReconnect(), 10000);
-                return;
-            }
-
+            // Try next HTTP service if current one fails
             if (reconnectAttempts >= maxReconnectAttempts) {
-                // Try next service
                 currentServiceIndex = (currentServiceIndex + 1) % clockServices.length;
                 reconnectAttempts = 0;
-                reconnectDelay = 2000; // Increased initial delay
-                log(`Switching to next clock service: ${clockServices[currentServiceIndex].name}`);
+                log(`Switching to next time service: ${clockServices[currentServiceIndex].name}`);
             }
 
             reconnectAttempts++;
-            log(`Scheduling streaming clock reconnect attempt ${reconnectAttempts} in ${reconnectDelay}ms`);
+            log(`Scheduling time sync retry attempt ${reconnectAttempts} in ${reconnectDelay}ms`);
             
             setTimeout(() => {
-                // Double-check MQTT state before reconnecting
-                if (!mqttClient || mqttConnected || !mqttClient.reconnecting) {
-                    connectStreamingClock();
-                } else {
-                    log('Skipping streaming clock reconnect - MQTT still connecting');
-                    scheduleReconnect();
-                }
+                connectStreamingClock();
             }, reconnectDelay);
             
-            // More conservative exponential backoff
+            // Conservative exponential backoff
             reconnectDelay = Math.min(reconnectDelay * 1.5 + Math.random() * 2000, 60000);
         }
 
         function updateClockConnectionStatus() {
             const statusElement = document.getElementById('ntpOffset');
-            if (clockConnected) {
+            if (syncFailureCount === 0) {
                 statusElement.style.color = '#27ae60';
             } else {
                 statusElement.style.color = '#e74c3c';
@@ -1352,42 +1227,23 @@
         }
 
         async function syncTime() {
-            if (clockWebSocket && clockWebSocket.readyState === WebSocket.OPEN) {
-                // Request time update via WebSocket
-                const service = clockServices[currentServiceIndex];
-                if (service.url.includes('worldtimeapi')) {
-                    clockWebSocket.send(JSON.stringify({ action: 'get_time', timezone: 'UTC' }));
-                } else {
-                    clockWebSocket.send(JSON.stringify({ action: 'get_time' }));
-                }
-                log('Requested time update via streaming clock');
-            } else {
-                // Fallback to HTTP or reconnect WebSocket
-                await connectStreamingClock();
-            }
+            // Use HTTP time synchronization
+            const service = clockServices[currentServiceIndex];
+            await syncTimeHTTP(service);
         }
 
-        // Start streaming clock connection with improved connection management
+        // Start HTTP time synchronization
         function startStreamingClock() {
+            // Initial sync
             connectStreamingClock();
             
-            // Set up periodic connection health check with reduced frequency to avoid conflicts
+            // Periodic HTTP time sync every 5 minutes to avoid conflicts with MQTT
             setInterval(() => {
-                // Only attempt reconnect if not currently connecting and MQTT is stable
-                if (!clockConnected &&
-                    (!clockWebSocket || clockWebSocket.readyState === WebSocket.CLOSED) &&
-                    (!mqttClient || mqttConnected || !mqttClient.reconnecting)) {
-                    log('Streaming clock connection lost, attempting reconnect...', 'warning');
+                if (!mqttClient || mqttConnected || !mqttClient.reconnecting) {
+                    log('Performing periodic time sync...', 'info');
                     connectStreamingClock();
                 }
-            }, 60000); // Reduced frequency to every 60 seconds
-            
-            // Request time updates every 2 minutes when connected
-            setInterval(() => {
-                if (clockConnected && clockWebSocket && clockWebSocket.readyState === WebSocket.OPEN) {
-                    syncTime();
-                }
-            }, 120000); // Reduced frequency to every 2 minutes
+            }, 300000); // Every 5 minutes
         }
 
         // Get drift-corrected streaming clock time
@@ -3233,3 +3089,4 @@
     </script>
 </body>
 </html>
+
