@@ -383,6 +383,9 @@
                     <label>
                         <input type="checkbox" id="autoExecuteMqtt"> Auto-execute received commands on serial devices
                     </label>
+                    <small style="color: #7f8c8d; display: block; margin-top: 5px;">
+                        MQTT commands will sync to phantom time using current Beat Division setting (seconds % division = 0)
+                    </small>
                 </div>
                 <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #3498db;">
                     <h4 style="margin: 0 0 10px 0; color: #2c3e50;">🎵 Rhythm Control Topic: "trigger_rhythm"</h4>
@@ -2627,9 +2630,13 @@
             }
         }
 
-        // Sync to nearest whole second and execute command
+        // Sync to nearest modulus interval and execute command
         async function syncToWholeSecondAndExecute(command) {
             try {
+                // Use current beat division from BPM settings for sync division
+                const beatDivision = parseInt(document.getElementById('beatDivision')?.value || '4');
+                const syncDivision = beatDivision; // Use beat division directly as sync division
+                
                 // Get current phantom time to calculate sync point
                 const response = await fetch('https://time.phantom.app/utc');
                 const timestampText = await response.text();
@@ -2638,40 +2645,45 @@
                 if (isNaN(currentPhantomTime)) {
                     // Fallback to local time with NTP offset if phantom time fails
                     const fallbackTime = Date.now() + ntpOffset;
-                    syncToWholeSecondWithTime(command, fallbackTime);
+                    syncToWholeSecondWithTime(command, fallbackTime, syncDivision);
                     return;
                 }
                 
-                syncToWholeSecondWithTime(command, currentPhantomTime);
+                syncToWholeSecondWithTime(command, currentPhantomTime, syncDivision);
                 
             } catch (error) {
                 log('Failed to get phantom time for sync, using fallback: ' + error.message, 'warning');
                 // Fallback to local time with NTP offset
                 const fallbackTime = Date.now() + ntpOffset;
-                syncToWholeSecondWithTime(command, fallbackTime);
+                const beatDivision = parseInt(document.getElementById('beatDivision')?.value || '4');
+                syncToWholeSecondWithTime(command, fallbackTime, beatDivision);
             }
         }
 
-        // Sync to next even second with given phantom time and execute command
-        function syncToWholeSecondWithTime(command, currentPhantomTime) {
+        // Sync to next modulus interval with given phantom time and execute command
+        function syncToWholeSecondWithTime(command, currentPhantomTime, syncDivision = 2) {
             // Calculate current second number from phantom time
             const currentSecond = Math.floor(currentPhantomTime / 1000);
             const msInCurrentSecond = currentPhantomTime % 1000;
             
-            // Find the next even second
+            // Find the next sync point based on modulus division
+            // When (second % syncDivision) === 0, it's a sync point
+            const currentModulus = currentSecond % syncDivision;
             let targetSecond;
-            if (currentSecond % 2 === 0) {
-                // Current second is even
+            
+            if (currentModulus === 0) {
+                // Currently at a sync point
                 if (msInCurrentSecond === 0) {
-                    // Exactly at an even second, execute now
+                    // Exactly at sync point, execute now
                     targetSecond = currentSecond;
                 } else {
-                    // Past the even second, wait for next even second
-                    targetSecond = currentSecond + 2;
+                    // Past the sync point, wait for next sync point
+                    targetSecond = currentSecond + syncDivision;
                 }
             } else {
-                // Current second is odd, wait for next even second
-                targetSecond = currentSecond + 1;
+                // Not at sync point, calculate next sync point
+                const secondsUntilNextSync = syncDivision - currentModulus;
+                targetSecond = currentSecond + secondsUntilNextSync;
             }
             
             const targetPhantomTime = targetSecond * 1000;
@@ -2684,17 +2696,18 @@
             const currentLocalTime = Date.now();
             const localDelay = targetLocalTime - currentLocalTime;
             
-            log(`MQTT command will execute at next even phantom time second: ${targetPhantomDate.toLocaleTimeString()}.000 (second ${targetSecond})`);
-            log(`Current phantom time: ${new Date(currentPhantomTime).toLocaleTimeString()}.${String(msInCurrentSecond).padStart(3, '0')} (second ${currentSecond})`);
-            log(`Waiting ${msUntilTarget}ms until even second, local delay: ${localDelay}ms (NTP offset: ${ntpOffset}ms)`);
+            log(`MQTT command will execute at next sync point (modulus ${syncDivision}): ${targetPhantomDate.toLocaleTimeString()}.000 (second ${targetSecond})`);
+            log(`Current phantom time: ${new Date(currentPhantomTime).toLocaleTimeString()}.${String(msInCurrentSecond).padStart(3, '0')} (second ${currentSecond}, mod ${currentModulus})`);
+            log(`Waiting ${msUntilTarget}ms until sync point, local delay: ${localDelay}ms (NTP offset: ${ntpOffset}ms)`);
             
-            // Schedule execution to hit the exact even phantom time second
+            // Schedule execution to hit the exact sync point
             setTimeout(() => {
                 const actualExecutionTime = Date.now();
                 const actualPhantomTime = actualExecutionTime + ntpOffset;
                 const phantomAccuracy = Math.abs(actualPhantomTime - targetPhantomTime);
                 const actualSecond = Math.floor(actualPhantomTime / 1000);
-                log(`Executing MQTT command at phantom second ${actualSecond} - Accuracy: ±${phantomAccuracy}ms from target`);
+                const actualModulus = actualSecond % syncDivision;
+                log(`Executing MQTT command at phantom second ${actualSecond} (mod ${actualModulus}) - Accuracy: ±${phantomAccuracy}ms from target`);
                 log(`Target phantom: ${new Date(targetPhantomTime).toLocaleTimeString()}.000, Actual phantom: ${new Date(actualPhantomTime).toLocaleTimeString()}.${String(actualPhantomTime % 1000).padStart(3, '0')}`);
                 executeCommand(command);
             }, Math.max(0, localDelay));
