@@ -2397,8 +2397,53 @@
             // Auto-execute if enabled and we have connected serial devices
             if (document.getElementById('autoExecuteMqtt').checked && connectedPorts.length > 0) {
                 log('Auto-executing MQTT command on serial devices: ' + message);
-                executeCommand(message);
+                syncToWholeSecondAndExecute(message);
             }
+        }
+
+        // Sync to nearest whole second and execute command
+        async function syncToWholeSecondAndExecute(command) {
+            try {
+                // Get current phantom time to calculate sync point
+                const response = await fetch('https://time.phantom.app/utc');
+                const timestampText = await response.text();
+                const currentPhantomTime = parseInt(timestampText.trim());
+                
+                if (isNaN(currentPhantomTime)) {
+                    // Fallback to local time with NTP offset if phantom time fails
+                    const fallbackTime = Date.now() + ntpOffset;
+                    syncToWholeSecondWithTime(command, fallbackTime);
+                    return;
+                }
+                
+                syncToWholeSecondWithTime(command, currentPhantomTime);
+                
+            } catch (error) {
+                log('Failed to get phantom time for sync, using fallback: ' + error.message, 'warning');
+                // Fallback to local time with NTP offset
+                const fallbackTime = Date.now() + ntpOffset;
+                syncToWholeSecondWithTime(command, fallbackTime);
+            }
+        }
+
+        // Sync to whole second with given time and execute command
+        function syncToWholeSecondWithTime(command, currentTime) {
+            // Calculate milliseconds until next whole second
+            const msInCurrentSecond = currentTime % 1000;
+            const msUntilNextSecond = msInCurrentSecond === 0 ? 0 : 1000 - msInCurrentSecond;
+            
+            const nextWholeSecond = currentTime + msUntilNextSecond;
+            const nextWholeSecondDate = new Date(nextWholeSecond);
+            
+            log(`MQTT command will execute at next whole second: ${nextWholeSecondDate.toLocaleTimeString()}.000 (${msUntilNextSecond}ms delay)`);
+            log(`Current time: ${new Date(currentTime).toLocaleTimeString()}.${String(msInCurrentSecond).padStart(3, '0')}`);
+            
+            // Schedule execution at the exact whole second
+            setTimeout(() => {
+                const actualExecutionTime = Date.now();
+                log(`Executing MQTT command at: ${new Date(actualExecutionTime).toLocaleTimeString()}.${String(actualExecutionTime % 1000).padStart(3, '0')}`);
+                executeCommand(command);
+            }, msUntilNextSecond);
         }
         
         // Handle synchronized command execution from MQTT
