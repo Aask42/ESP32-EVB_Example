@@ -432,8 +432,8 @@
                         <div class="sync-stat-label">Last Sync (NTP)</div>
                     </div>
                     <div class="sync-stat">
-                        <div id="currentNtpTime" class="sync-stat-value">--</div>
-                        <div class="sync-stat-label">Current NTP Time</div>
+                        <div id="currentPhantomTime" class="sync-stat-value">--</div>
+                        <div class="sync-stat-label">Current Phantom Time</div>
                     </div>
                 </div>
                 <button id="syncBtn" onclick="syncTime()" class="btn-success">🔄 Sync Time with NTP</button>
@@ -668,7 +668,7 @@
         let tapTimes = [];
         let tapTimeoutId = null;
         let connectionHealthInterval;
-        let ntpTimeDisplayInterval;
+        let phantomTimeDisplayInterval;
         
         // MQTT variables
         let mqttClient = null;
@@ -684,7 +684,7 @@
             startDataRateMonitoring();
             startConnectionHealthMonitoring();
             initializeMqtt();
-            startNtpTimeDisplay();
+            startPhantomTimeDisplay();
             
             // Initialize baud rate (ESP32 commonly uses 115200)
             window.selectedBaudRate = 115200;
@@ -1068,21 +1068,21 @@
                 log('Syncing with NTP server...');
                 document.getElementById('syncBtn').disabled = true;
                 
-                // Simple NTP sync using multiple time servers
+                // Use time.phantom.app/utc for time synchronization
                 const timeServers = [
-                    'http://192.168.8.247:8123/time'
+                    'https://time.phantom.app/utc'
                 ];
 
                 let serverTime = null;
                 for (const server of timeServers) {
                     try {
                         const response = await fetch(server);
-                        const data = await response.json();
+                        const timestampText = await response.text();
                         
-                        if (data.datetime) {
-                            serverTime = new Date(data.datetime);
-                        } else if (data.dateTime) {
-                            serverTime = new Date(data.dateTime);
+                        // The API returns just a timestamp like 1750805175587
+                        const timestamp = parseInt(timestampText.trim());
+                        if (!isNaN(timestamp)) {
+                            serverTime = new Date(timestamp);
                         }
                         
                         if (serverTime) break;
@@ -1121,12 +1121,28 @@
             syncInterval = setInterval(syncTime, 300000); // Sync every 5 minutes
         }
 
-        // Start NTP time display update
-        function startNtpTimeDisplay() {
-            // Update current NTP time display every second
-            ntpTimeDisplayInterval = setInterval(() => {
-                const ntpTime = new Date(Date.now() + ntpOffset);
-                document.getElementById('currentNtpTime').textContent = ntpTime.toLocaleTimeString();
+        // Start Phantom time display update
+        function startPhantomTimeDisplay() {
+            // Update current Phantom time display every second
+            phantomTimeDisplayInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('https://time.phantom.app/utc');
+                    const timestampText = await response.text();
+                    const timestamp = parseInt(timestampText.trim());
+                    
+                    if (!isNaN(timestamp)) {
+                        const phantomTime = new Date(timestamp);
+                        document.getElementById('currentPhantomTime').textContent = phantomTime.toLocaleTimeString();
+                    } else {
+                        // Fallback to NTP-adjusted local time if phantom time fails
+                        const ntpTime = new Date(Date.now() + ntpOffset);
+                        document.getElementById('currentPhantomTime').textContent = ntpTime.toLocaleTimeString();
+                    }
+                } catch (error) {
+                    // Fallback to NTP-adjusted local time if phantom time fails
+                    const ntpTime = new Date(Date.now() + ntpOffset);
+                    document.getElementById('currentPhantomTime').textContent = ntpTime.toLocaleTimeString();
+                }
             }, 1000);
         }
 
@@ -2825,7 +2841,7 @@
             if (syncInterval) clearInterval(syncInterval);
             if (dataRateInterval) clearInterval(dataRateInterval);
             if (connectionHealthInterval) clearInterval(connectionHealthInterval);
-            if (ntpTimeDisplayInterval) clearInterval(ntpTimeDisplayInterval);
+            if (phantomTimeDisplayInterval) clearInterval(phantomTimeDisplayInterval);
             if (bpmInterval) clearTimeout(bpmInterval);
             if (fpsInterval) clearTimeout(fpsInterval);
             if (metronomeInterval) clearTimeout(metronomeInterval);
