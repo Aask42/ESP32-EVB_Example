@@ -2638,29 +2638,87 @@
             try {
                 // Use current beat division from BPM settings for sync division
                 const beatDivision = parseInt(document.getElementById('beatDivision')?.value || '4');
-                const syncDivision = beatDivision; // Use beat division directly as sync division
+                const syncDivision = beatDivision;
                 
-                // Get current phantom time to calculate sync point
-                const response = await fetch('https://time.phantom.app/utc');
-                const timestampText = await response.text();
-                const currentPhantomTime = parseInt(timestampText.trim());
+                // Calculate the target sync point without fetching current time
+                // This ensures all computers target the same absolute phantom time
+                const now = Date.now();
+                const estimatedPhantomTime = now + ntpOffset;
+                const currentSecond = Math.floor(estimatedPhantomTime / 1000);
+                const currentModulus = currentSecond % syncDivision;
                 
-                if (isNaN(currentPhantomTime)) {
-                    // Fallback to local time with NTP offset if phantom time fails
-                    const fallbackTime = Date.now() + ntpOffset;
-                    syncToWholeSecondWithTime(command, fallbackTime, syncDivision);
-                    return;
+                // Find next sync point
+                let targetSecond;
+                if (currentModulus === 0) {
+                    // At sync point, use next one to ensure all computers sync together
+                    targetSecond = currentSecond + syncDivision;
+                } else {
+                    // Calculate next sync point
+                    const secondsUntilNextSync = syncDivision - currentModulus;
+                    targetSecond = currentSecond + secondsUntilNextSync;
                 }
                 
-                syncToWholeSecondWithTime(command, currentPhantomTime, syncDivision);
+                const targetPhantomTime = targetSecond * 1000;
+                
+                log(`All computers will sync to phantom second ${targetSecond} (mod ${syncDivision} = 0)`);
+                log(`Target phantom time: ${new Date(targetPhantomTime).toLocaleTimeString()}.000`);
+                
+                // Start polling phantom time to execute at exact moment
+                pollForExactPhantomTime(command, targetPhantomTime, syncDivision);
                 
             } catch (error) {
-                log('Failed to get phantom time for sync, using fallback: ' + error.message, 'warning');
-                // Fallback to local time with NTP offset
-                const fallbackTime = Date.now() + ntpOffset;
-                const beatDivision = parseInt(document.getElementById('beatDivision')?.value || '4');
-                syncToWholeSecondWithTime(command, fallbackTime, beatDivision);
+                log('Failed to setup phantom time sync: ' + error.message, 'error');
             }
+        }
+        
+        // Poll phantom time and execute at exact target moment
+        async function pollForExactPhantomTime(command, targetPhantomTime, syncDivision) {
+            const targetSecond = Math.floor(targetPhantomTime / 1000);
+            
+            const checkTime = async () => {
+                try {
+                    const response = await fetch('https://time.phantom.app/utc');
+                    const timestampText = await response.text();
+                    const currentPhantomTime = parseInt(timestampText.trim());
+                    
+                    if (!isNaN(currentPhantomTime)) {
+                        const currentSecond = Math.floor(currentPhantomTime / 1000);
+                        const msInSecond = currentPhantomTime % 1000;
+                        
+                        // Execute when we hit the target second within first 100ms
+                        if (currentSecond === targetSecond && msInSecond <= 100) {
+                            const actualModulus = currentSecond % syncDivision;
+                            log(`EXECUTING at phantom second ${currentSecond} (mod ${actualModulus}) - ${msInSecond}ms into second`);
+                            log(`Phantom time: ${new Date(currentPhantomTime).toLocaleTimeString()}.${String(msInSecond).padStart(3, '0')}`);
+                            executeCommand(command);
+                            return;
+                        }
+                        
+                        // If we're past the target, we missed it
+                        if (currentSecond > targetSecond) {
+                            log(`Missed sync point - current second ${currentSecond} > target ${targetSecond}`, 'warning');
+                            return;
+                        }
+                        
+                        // Continue polling if we haven't reached target yet
+                        const secondsRemaining = targetSecond - currentSecond;
+                        if (secondsRemaining <= 2) {
+                            // Poll every 50ms when close
+                            setTimeout(checkTime, 50);
+                        } else {
+                            // Poll every 500ms when far away
+                            setTimeout(checkTime, 500);
+                        }
+                    }
+                } catch (error) {
+                    log('Error polling phantom time: ' + error.message, 'error');
+                    // Retry after 100ms
+                    setTimeout(checkTime, 100);
+                }
+            };
+            
+            // Start polling
+            checkTime();
         }
 
         // Sync to next modulus interval with given phantom time and execute command
