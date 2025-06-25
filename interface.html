@@ -359,11 +359,11 @@
                 <div class="controls">
                     <div class="control-group">
                         <label for="publishTopic">Publish Topic:</label>
-                        <input type="text" id="publishTopic" value="esp32/status" placeholder="esp32/status">
+                        <input type="text" id="publishTopic" value="trigger_rhythm" placeholder="trigger_rhythm">
                     </div>
                     <div class="control-group">
                         <label for="publishMessage">Message to Publish:</label>
-                        <textarea id="publishMessage" rows="2" placeholder="Enter message to publish..."></textarea>
+                        <textarea id="publishMessage" rows="2" placeholder="Enter message to publish...">bpm:60,division:4</textarea>
                     </div>
                 </div>
                 <div class="controls">
@@ -448,13 +448,13 @@
                 <div class="controls">
                     <div class="control-group">
                         <label for="commandInput">Command to Send:</label>
-                        <textarea id="commandInput" rows="3" placeholder="Enter command to send to all devices..."></textarea>
+                        <textarea id="commandInput" rows="3" placeholder="Enter command to send to all devices...">1</textarea>
                     </div>
                     <div class="control-group">
                         <label for="schedulingMode">Scheduling Mode:</label>
                         <select id="schedulingMode" onchange="updateSchedulingMode()">
                             <option value="delay">Time Delay</option>
-                            <option value="bpm">BPM (Beats Per Minute)</option>
+                            <option value="bpm" selected>BPM (Beats Per Minute)</option>
                             <option value="fps">FPS (Frames Per Second)</option>
                         </select>
                     </div>
@@ -698,6 +698,9 @@
             document.getElementById('beatDivision').addEventListener('change', updateBpmTiming);
             document.getElementById('fpsInput').addEventListener('change', updateFpsTiming);
             document.getElementById('frameInterval').addEventListener('input', updateFpsTiming);
+            
+            // Initialize BPM mode as default
+            updateSchedulingMode();
         });
 
         // Check if Web Serial API is supported
@@ -2673,9 +2676,11 @@
             
             if (currentModulus === 0) {
                 // Currently at a sync point
-                if (msInCurrentSecond === 0) {
-                    // Exactly at sync point, execute now
-                    targetSecond = currentSecond;
+                if (msInCurrentSecond <= 50) { // Allow 50ms window at start of sync point
+                    // Close enough to sync point, execute now
+                    log(`Executing immediately - at sync point within 50ms window`);
+                    executeCommand(command);
+                    return;
                 } else {
                     // Past the sync point, wait for next sync point
                     targetSecond = currentSecond + syncDivision;
@@ -2690,25 +2695,28 @@
             const targetPhantomDate = new Date(targetPhantomTime);
             const msUntilTarget = targetPhantomTime - currentPhantomTime;
             
-            // Calculate local delay needed to hit the target phantom time
-            // We need to execute when our local time + ntpOffset equals the target phantom time
+            // Calculate precise local delay to hit exact phantom time
+            // Since phantom time won't drift, we can trust this calculation
             const targetLocalTime = targetPhantomTime - ntpOffset;
             const currentLocalTime = Date.now();
             const localDelay = targetLocalTime - currentLocalTime;
             
-            log(`MQTT command will execute at next sync point (modulus ${syncDivision}): ${targetPhantomDate.toLocaleTimeString()}.000 (second ${targetSecond})`);
+            log(`MQTT command will execute at sync point (mod ${syncDivision}): ${targetPhantomDate.toLocaleTimeString()}.000 (second ${targetSecond})`);
             log(`Current phantom time: ${new Date(currentPhantomTime).toLocaleTimeString()}.${String(msInCurrentSecond).padStart(3, '0')} (second ${currentSecond}, mod ${currentModulus})`);
-            log(`Waiting ${msUntilTarget}ms until sync point, local delay: ${localDelay}ms (NTP offset: ${ntpOffset}ms)`);
+            log(`Phantom time until target: ${msUntilTarget}ms, Local delay: ${localDelay}ms (NTP offset: ${ntpOffset}ms)`);
             
-            // Schedule execution to hit the exact sync point
+            // Execute at the exact sync point using reliable setTimeout
+            // Since phantom time is stable, this will be accurate across all computers
             setTimeout(() => {
                 const actualExecutionTime = Date.now();
                 const actualPhantomTime = actualExecutionTime + ntpOffset;
                 const phantomAccuracy = Math.abs(actualPhantomTime - targetPhantomTime);
                 const actualSecond = Math.floor(actualPhantomTime / 1000);
                 const actualModulus = actualSecond % syncDivision;
-                log(`Executing MQTT command at phantom second ${actualSecond} (mod ${actualModulus}) - Accuracy: ±${phantomAccuracy}ms from target`);
-                log(`Target phantom: ${new Date(targetPhantomTime).toLocaleTimeString()}.000, Actual phantom: ${new Date(actualPhantomTime).toLocaleTimeString()}.${String(actualPhantomTime % 1000).padStart(3, '0')}`);
+                
+                log(`Executing MQTT command at phantom second ${actualSecond} (mod ${actualModulus}) - Accuracy: ±${phantomAccuracy}ms`);
+                log(`Target: ${new Date(targetPhantomTime).toLocaleTimeString()}.000, Actual: ${new Date(actualPhantomTime).toLocaleTimeString()}.${String(actualPhantomTime % 1000).padStart(3, '0')}`);
+                
                 executeCommand(command);
             }, Math.max(0, localDelay));
         }
