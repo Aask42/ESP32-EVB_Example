@@ -2686,7 +2686,7 @@
             }
         }
 
-        // MQTT trigger starts full phantom-time-locked BPM sequence for perfect synchronization
+        // MQTT trigger starts full phantom-time-locked BPM sequence with coordinated sync point
         async function syncToWholeSecondAndExecute(command) {
             try {
                 // Get current BPM settings
@@ -2696,7 +2696,7 @@
                 const loop = document.getElementById('bpmLoop').checked;
                 const intervalMs = (60000 / bpm) / (division / 4);
                 
-                log(`MQTT trigger starting phantom-time-locked BPM sequence: ${bpm} BPM, ${division} division, ${beatCount} beats, loop: ${loop}`);
+                log(`MQTT trigger starting coordinated phantom-time-locked BPM sequence: ${bpm} BPM, ${division} division, ${beatCount} beats, loop: ${loop}`);
                 log(`Beat interval: ${intervalMs.toFixed(1)}ms - synchronized to phantom time grid`);
                 
                 // Cancel any existing BPM sequence
@@ -2707,18 +2707,62 @@
                 
                 // Update UI to show MQTT-triggered BPM sequence
                 document.getElementById('commandStatus').className = 'status syncing';
-                document.getElementById('commandStatus').textContent = `MQTT-triggered BPM sequence: ${bpm} BPM (Phantom locked)`;
+                document.getElementById('commandStatus').textContent = `MQTT-triggered BPM sequence: ${bpm} BPM (Coordinated sync)`;
                 document.getElementById('cancelBtn').disabled = false;
                 
                 // Reset execution counter for new sequence
                 executionCounter = 0;
                 document.getElementById('executionCount').textContent = '0';
                 
-                // Start the same phantom-time-locked BPM sequence as manual scheduling
-                pollPhantomTimeForBpm(command, bpm, division, beatCount, loop, intervalMs);
+                // Use coordinated sync point to ensure all devices start at exactly the same phantom time
+                startCoordinatedPhantomTimeBpmSequence(command, bpm, division, beatCount, loop, intervalMs);
                 
             } catch (error) {
-                log('Failed to setup MQTT phantom time BPM sequence: ' + error.message, 'error');
+                log('Failed to setup MQTT coordinated phantom time BPM sequence: ' + error.message, 'error');
+            }
+        }
+        
+        // Start BPM sequence with coordinated sync point - all devices sync to same future phantom time
+        async function startCoordinatedPhantomTimeBpmSequence(command, bpm, division, beatCount, loop, intervalMs) {
+            try {
+                // Get current phantom time
+                const response = await fetch('https://time.phantom.app/utc');
+                const timestampText = await response.text();
+                const currentPhantomTime = parseInt(timestampText.trim());
+                
+                if (isNaN(currentPhantomTime)) {
+                    throw new Error('Invalid phantom time response');
+                }
+                
+                // Calculate coordinated sync point: 3 seconds in the future to ensure all devices have time
+                const currentPhantomSeconds = Math.floor(currentPhantomTime / 1000);
+                const coordinatedSyncSeconds = currentPhantomSeconds + 3; // 3 second buffer
+                const coordinatedSyncPhantomTime = coordinatedSyncSeconds * 1000; // Exact whole second
+                
+                const delayMs = coordinatedSyncPhantomTime - currentPhantomTime;
+                
+                log(`Coordinated sync point: phantom second ${coordinatedSyncSeconds} (${new Date(coordinatedSyncPhantomTime).toLocaleTimeString()}.000)`);
+                log(`Current phantom time: ${new Date(currentPhantomTime).toLocaleTimeString()}.${String(currentPhantomTime % 1000).padStart(3, '0')}`);
+                log(`All devices will start BPM sequence in ${delayMs}ms at the same phantom time`);
+                
+                // Calculate local delay to hit coordinated sync point
+                const targetLocalTime = coordinatedSyncPhantomTime - ntpOffset;
+                const currentLocalTime = Date.now();
+                const localDelay = targetLocalTime - currentLocalTime;
+                
+                // Start the phantom-time-locked BPM sequence at the coordinated sync point
+                setTimeout(() => {
+                    log(`Starting coordinated BPM sequence at phantom second ${coordinatedSyncSeconds}`);
+                    executeBpmSequenceLockedToPhantomTime(command, bpm, division, beatCount, loop, intervalMs, coordinatedSyncPhantomTime);
+                }, Math.max(0, localDelay));
+                
+            } catch (error) {
+                log('Failed to get phantom time for coordinated sync, falling back to immediate start: ' + error.message, 'warning');
+                // Fallback: start immediately but still try to lock to phantom time
+                const fallbackSyncTime = Date.now() + 1000; // 1 second from now
+                setTimeout(() => {
+                    executeBpmSequenceLockedToPhantomTime(command, bpm, division, beatCount, loop, intervalMs, fallbackSyncTime);
+                }, 1000);
             }
         }
         
