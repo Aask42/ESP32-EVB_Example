@@ -2686,40 +2686,15 @@
             }
         }
 
-        // MQTT trigger uses exact same logic as manual BPM scheduling for perfect sync
+        // MQTT trigger does exactly the same thing as "Schedule Command" button
         async function syncToWholeSecondAndExecute(command) {
-            try {
-                // Get current BPM settings
-                const bpm = parseFloat(document.getElementById('bpmInput').value);
-                const division = parseInt(document.getElementById('beatDivision').value);
-                const beatCount = parseInt(document.getElementById('beatCount').value);
-                const loop = document.getElementById('bpmLoop').checked;
-                const intervalMs = (60000 / bpm) / (division / 4);
-                
-                log(`MQTT trigger starting phantom-time-locked BPM sequence: ${bpm} BPM, ${division} division, ${beatCount} beats, loop: ${loop}`);
-                log(`Using identical logic to manual BPM scheduling for perfect sync`);
-                
-                // Cancel any existing BPM sequence
-                if (bpmInterval) {
-                    clearTimeout(bpmInterval);
-                    bpmInterval = null;
-                }
-                
-                // Update UI to show MQTT-triggered BPM sequence
-                document.getElementById('commandStatus').className = 'status syncing';
-                document.getElementById('commandStatus').textContent = `MQTT-triggered BPM sequence: ${bpm} BPM (Phantom locked)`;
-                document.getElementById('cancelBtn').disabled = false;
-                
-                // Reset execution counter for new sequence
-                executionCounter = 0;
-                document.getElementById('executionCount').textContent = '0';
-                
-                // Use the exact same phantom time BPM logic as manual scheduling
-                pollPhantomTimeForBpm(command, bpm, division, beatCount, loop, intervalMs);
-                
-            } catch (error) {
-                log('Failed to setup MQTT phantom time BPM sequence: ' + error.message, 'error');
-            }
+            // Set the command input to the MQTT command
+            document.getElementById('commandInput').value = command;
+            
+            log(`MQTT trigger executing same logic as "Schedule Command" button with command: "${command}"`);
+            
+            // Call the exact same function as the "Schedule Command" button
+            scheduleBpmCommand(command);
         }
         
 
