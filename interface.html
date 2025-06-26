@@ -2686,70 +2686,42 @@
             }
         }
 
-        // Sync to nearest modulus interval and execute command using pure phantom time polling
+        // MQTT trigger starts full phantom-time-locked BPM sequence for perfect synchronization
         async function syncToWholeSecondAndExecute(command) {
             try {
-                // Get current BPM settings for sync calculation
+                // Get current BPM settings
                 const bpm = parseFloat(document.getElementById('bpmInput').value);
                 const division = parseInt(document.getElementById('beatDivision').value);
                 const beatCount = parseInt(document.getElementById('beatCount').value);
+                const loop = document.getElementById('bpmLoop').checked;
                 const intervalMs = (60000 / bpm) / (division / 4);
                 
-                log(`MQTT trigger using pure phantom time polling: ${bpm} BPM, ${division} division`);
-                log(`Beat interval: ${intervalMs.toFixed(1)}ms`);
+                log(`MQTT trigger starting phantom-time-locked BPM sequence: ${bpm} BPM, ${division} division, ${beatCount} beats, loop: ${loop}`);
+                log(`Beat interval: ${intervalMs.toFixed(1)}ms - synchronized to phantom time grid`);
                 
-                // Start phantom time polling to find next sync point
-                pollPhantomTimeForSync(command, bpm, division, beatCount, intervalMs);
+                // Cancel any existing BPM sequence
+                if (bpmInterval) {
+                    clearTimeout(bpmInterval);
+                    bpmInterval = null;
+                }
+                
+                // Update UI to show MQTT-triggered BPM sequence
+                document.getElementById('commandStatus').className = 'status syncing';
+                document.getElementById('commandStatus').textContent = `MQTT-triggered BPM sequence: ${bpm} BPM (Phantom locked)`;
+                document.getElementById('cancelBtn').disabled = false;
+                
+                // Reset execution counter for new sequence
+                executionCounter = 0;
+                document.getElementById('executionCount').textContent = '0';
+                
+                // Start the same phantom-time-locked BPM sequence as manual scheduling
+                pollPhantomTimeForBpm(command, bpm, division, beatCount, loop, intervalMs);
                 
             } catch (error) {
-                log('Failed to setup MQTT phantom time sync: ' + error.message, 'error');
+                log('Failed to setup MQTT phantom time BPM sequence: ' + error.message, 'error');
             }
         }
         
-        // Simplified MQTT sync - execute at next whole second boundary
-        async function pollPhantomTimeForSync(command, bpm, division, beatCount, intervalMs) {
-            try {
-                // Get phantom time to find next whole second
-                const response = await fetch('https://time.phantom.app/utc');
-                const timestampText = await response.text();
-                const currentPhantomTime = parseInt(timestampText.trim());
-                
-                if (isNaN(currentPhantomTime)) {
-                    throw new Error('Invalid phantom time response');
-                }
-                
-                // Calculate next whole second as execution point
-                const msInCurrentSecond = currentPhantomTime % 1000;
-                const msUntilNextSecond = msInCurrentSecond === 0 ? 0 : 1000 - msInCurrentSecond;
-                const executionPhantomTime = currentPhantomTime + msUntilNextSecond;
-                
-                // Calculate which beat this represents
-                const phantomSeconds = Math.floor(executionPhantomTime / 1000);
-                const beatsPerSecond = (bpm / 60) * (division / 4);
-                const totalBeatsElapsed = Math.floor(phantomSeconds * beatsPerSecond);
-                const currentBeat = totalBeatsElapsed % beatCount;
-                
-                log(`MQTT command will execute at phantom second ${phantomSeconds} (${msUntilNextSecond}ms from now)`);
-                log(`Beat position: ${currentBeat + 1}/${beatCount} at ${bpm} BPM, 1/${division} notes`);
-                log(`Phantom time: ${new Date(executionPhantomTime).toLocaleTimeString()}.000`);
-                
-                // Calculate local delay to hit execution point
-                const targetLocalTime = executionPhantomTime - ntpOffset;
-                const currentLocalTime = Date.now();
-                const delay = targetLocalTime - currentLocalTime;
-                
-                // Execute at the exact sync point
-                setTimeout(() => {
-                    log(`EXECUTING MQTT command at synchronized phantom time`);
-                    executeCommand(command);
-                }, Math.max(0, delay));
-                
-            } catch (error) {
-                log('Failed to get phantom time for MQTT sync, executing immediately: ' + error.message, 'warning');
-                // Fallback: execute immediately
-                executeCommand(command);
-            }
-        }
 
         
         // Handle synchronized command execution from MQTT
