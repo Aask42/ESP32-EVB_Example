@@ -1366,7 +1366,7 @@
         }
         
         // Poll phantom time continuously for BPM execution using 60 BPM frame-lock
-        // Simplified BPM scheduling with phantom time sync at start, then reliable intervals
+        // BPM scheduling locked to phantom time grid - each beat executes at exact phantom time positions
         async function pollPhantomTimeForBpm(command, bpm, division, beatCount, loop, intervalMs) {
             try {
                 // Get phantom time to establish sync point
@@ -1383,51 +1383,66 @@
                 const msUntilNextSecond = msInCurrentSecond === 0 ? 0 : 1000 - msInCurrentSecond;
                 const syncPointPhantomTime = currentPhantomTime + msUntilNextSecond;
                 
-                log(`BPM sync point: ${new Date(syncPointPhantomTime).toLocaleTimeString()}.000 (phantom time)`);
-                log(`Starting BPM sequence: ${bpm} BPM, ${division} division, ${intervalMs.toFixed(1)}ms intervals`);
+                log(`BPM locked to phantom time grid: ${bpm} BPM, ${division} division`);
+                log(`Sync point: ${new Date(syncPointPhantomTime).toLocaleTimeString()}.000 (phantom time)`);
                 
                 // Calculate local delay to hit sync point
                 const targetLocalTime = syncPointPhantomTime - ntpOffset;
                 const currentLocalTime = Date.now();
                 const initialDelay = targetLocalTime - currentLocalTime;
                 
-                // Start the BPM sequence at the sync point
+                // Start the phantom-time-locked BPM sequence
                 setTimeout(() => {
-                    executeBpmSequenceWithIntervals(command, bpm, division, beatCount, loop, intervalMs);
+                    executeBpmSequenceLockedToPhantomTime(command, bpm, division, beatCount, loop, intervalMs, syncPointPhantomTime);
                 }, Math.max(0, initialDelay));
                 
             } catch (error) {
                 log('Failed to get phantom time for BPM sync, starting immediately: ' + error.message, 'warning');
-                // Fallback: start immediately
-                executeBpmSequenceWithIntervals(command, bpm, division, beatCount, loop, intervalMs);
+                // Fallback: start immediately but still try to lock to phantom time
+                executeBpmSequenceLockedToPhantomTime(command, bpm, division, beatCount, loop, intervalMs, Date.now());
             }
         }
         
-        // Execute BPM sequence using reliable setTimeout intervals
-        function executeBpmSequenceWithIntervals(command, bpm, division, beatCount, loop, intervalMs) {
+        // Execute BPM sequence with each beat locked to phantom time grid positions
+        function executeBpmSequenceLockedToPhantomTime(command, bpm, division, beatCount, loop, intervalMs, startPhantomTime) {
             let currentBeat = 0;
+            let beatNumber = 0; // Total beats executed
             
-            const executeBpmBeat = () => {
+            const executeBpmBeat = async () => {
                 if (currentBeat < beatCount || loop) {
+                    // Calculate exact phantom time for this beat
+                    const targetPhantomTime = startPhantomTime + (beatNumber * intervalMs);
+                    
                     // Execute command
                     executeCommand(command);
                     executionCounter++;
                     document.getElementById('executionCount').textContent = executionCounter;
                     
-                    log(`BPM beat ${currentBeat + 1}/${beatCount} executed (${bpm} BPM, 1/${division} notes)`);
+                    log(`BPM beat ${currentBeat + 1}/${beatCount} executed at phantom time ${new Date(targetPhantomTime).toLocaleTimeString()}.${String(targetPhantomTime % 1000).padStart(3, '0')}`);
                     
                     currentBeat++;
+                    beatNumber++;
                     if (loop && currentBeat >= beatCount) {
                         currentBeat = 0; // Reset for loop
                     }
                     
-                    // Update next execution display
-                    const nextTime = new Date(Date.now() + intervalMs);
-                    document.getElementById('nextExecution').textContent = nextTime.toLocaleTimeString() + ' (BPM)';
-                    
-                    // Schedule next beat
+                    // Schedule next beat to execute at exact phantom time
                     if (currentBeat < beatCount || loop) {
-                        bpmInterval = setTimeout(executeBpmBeat, intervalMs);
+                        const nextTargetPhantomTime = startPhantomTime + (beatNumber * intervalMs);
+                        
+                        // Calculate local delay to hit exact phantom time
+                        const currentLocalTime = Date.now();
+                        const targetLocalTime = nextTargetPhantomTime - ntpOffset;
+                        const delay = targetLocalTime - currentLocalTime;
+                        
+                        // Update next execution display with phantom time
+                        document.getElementById('nextExecution').textContent =
+                            new Date(nextTargetPhantomTime).toLocaleTimeString() + `.${String(nextTargetPhantomTime % 1000).padStart(3, '0')} (Phantom)`;
+                        
+                        // Schedule next beat to execute at exact phantom time position
+                        bpmInterval = setTimeout(executeBpmBeat, Math.max(0, delay));
+                        
+                        log(`Next beat scheduled for phantom time ${new Date(nextTargetPhantomTime).toLocaleTimeString()}.${String(nextTargetPhantomTime % 1000).padStart(3, '0')} (${delay}ms delay)`);
                     } else {
                         document.getElementById('commandStatus').className = 'status connected';
                         document.getElementById('commandStatus').textContent = 'BPM sequence completed';
